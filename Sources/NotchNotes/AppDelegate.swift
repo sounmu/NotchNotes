@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func hideNotes() {
-        panelController?.collapse(animated: true)
+        panelController?.collapse(animated: true, returnFocus: true)
     }
 
     @objc private func quit() {

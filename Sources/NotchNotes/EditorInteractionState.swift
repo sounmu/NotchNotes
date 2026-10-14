@@ -116,11 +116,6 @@ final class EditorInteractionState: ObservableObject {
         return safeSelectedRange(in: textView)
     }
 
-    func hasKeyboardFocus() -> Bool {
-        guard let textView, let window = textView.window else { return false }
-        return window.firstResponder === textView
-    }
-
     func applyMarkdownCommand(_ command: MarkdownCommand) {
         guard let textView else { return }
 
