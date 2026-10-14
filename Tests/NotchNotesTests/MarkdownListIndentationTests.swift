@@ -75,6 +75,23 @@ final class MarkdownListIndentationTests: XCTestCase {
         }
     }
 
+    func testReturnContinuesUnorderedAndTodoItemsAtSameIndentation() {
+        let cases = [
+            ("- item", "- item\n- "),
+            ("• item", "• item\n• "),
+            ("- [ ] todo", "- [ ] todo\n- [ ] "),
+            ("• [x] done", "• [x] done\n• [ ] "),
+            ("\t- [ ] todo", "\t- [ ] todo\n\t- [ ] ")
+        ]
+
+        for (input, expected) in cases {
+            let (textView, coordinator) = makeEditor(input)
+
+            XCTAssertFalse(insertNewline(in: textView, with: coordinator), input)
+            XCTAssertEqual(textView.string, expected, input)
+        }
+    }
+
     private func makeEditor(_ text: String) -> (NSTextView, NativeTextViewCoordinator) {
         let wrapper = NativeTextViewWrapper(text: .constant(text))
         let coordinator = wrapper.makeCoordinator()
@@ -90,6 +107,14 @@ final class MarkdownListIndentationTests: XCTestCase {
             textView,
             shouldChangeTextIn: textView.selectedRange(),
             replacementString: "\t"
+        )
+    }
+
+    private func insertNewline(in textView: NSTextView, with coordinator: NativeTextViewCoordinator) -> Bool {
+        coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange(),
+            replacementString: "\n"
         )
     }
 
