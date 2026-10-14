@@ -166,6 +166,9 @@ final class NotchPanelController: NSObject {
     private var activeMenuTrackingCount = 0
     private var collapseTask: DispatchWorkItem?
     private var settingsCancellables = Set<AnyCancellable>()
+    /// Screen frame of the menu bar status item. Clicks there open the drawer,
+    /// so the matching mouse-up must not be treated as an outside click.
+    var statusItemFrameProvider: (() -> NSRect?)?
 
     override init() {
         hotPanel = NotchPanel(
@@ -246,6 +249,16 @@ final class NotchPanelController: NSObject {
             guard let self else { return }
             guard self.isExpanded else { return }
             self.activateEditor()
+        }
+    }
+
+    /// Menu bar icon behavior: close an activated drawer, otherwise open and focus it.
+    /// A passive hover preview is promoted to an activated drawer instead of closing.
+    func toggle(animated: Bool) {
+        if isExpanded, drawerPanel.allowsKeyActivation {
+            collapse(animated: animated)
+        } else {
+            expand(animated: animated)
         }
     }
 
@@ -636,6 +649,7 @@ final class NotchPanelController: NSObject {
         let margin: CGFloat = 10
         return drawerPanel.frame.insetBy(dx: -margin, dy: -margin).contains(point)
             || activationFrame().contains(point)
+            || statusItemFrameProvider?()?.contains(point) == true
     }
 
     private func receiveDroppedFiles(_ urls: [URL]) -> Bool {
