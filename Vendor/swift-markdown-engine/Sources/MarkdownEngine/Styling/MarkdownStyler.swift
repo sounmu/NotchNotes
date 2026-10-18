@@ -9,7 +9,7 @@
 // the current text and cursor position.
 //
 // Token-class–specific styling lives in extension files:
-//   - MarkdownStyler+TextStyling.swift   (headings, emphasis)
+//   - MarkdownStyler+TextStyling.swift   (headings, emphasis, strikethrough)
 //   - MarkdownStyler+Links.swift         (auto / markdown / wiki links)
 //   - MarkdownStyler+Code.swift          (fenced + inline code)
 //   - MarkdownStyler+Latex.swift         (block + inline LaTeX)
@@ -159,6 +159,7 @@ enum MarkdownStyler {
         )
         result += styleHeadings(ctx)
         result += styleEmphasis(ctx)
+        result += styleStrikethrough(ctx)
         result += styleAutoLinks(ctx)
         result += styleWikiLinks(ctx, wikiLinkIDProvider: wikiLinkIDProvider)
         result += styleImageEmbeds(ctx)
