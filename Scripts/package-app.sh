@@ -28,7 +28,8 @@ swift build \
   --arch x86_64 \
   --scratch-path "$BUILD_DIR"
 
-BINARY_PATH="$BUILD_DIR/apple/Products/Release/$APP_NAME"
+BINARY_DIR="$(swift build -c release --arch arm64 --arch x86_64 --scratch-path "$BUILD_DIR" --show-bin-path)"
+BINARY_PATH="$BINARY_DIR/$APP_NAME"
 if [[ ! -x "$BINARY_PATH" ]]; then
   echo "找不到构建产物：$BINARY_PATH" >&2
   exit 1
@@ -44,7 +45,7 @@ rm -rf "$APP_DIR"
 rm -f "$ZIP_PATH" "$CHECKSUM_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPER_DIR" "$DAEMON_DIR"
 cp "$BINARY_PATH" "$MACOS_DIR/$APP_NAME"
-cp "$BUILD_DIR/apple/Products/Release/$HELPER_NAME" "$HELPER_DIR/$HELPER_NAME"
+cp "$BINARY_DIR/$HELPER_NAME" "$HELPER_DIR/$HELPER_NAME"
 cp "$ROOT_DIR/Resources/io.github.oiloil.NotchNotes.SleepGuard.plist" "$DAEMON_DIR/"
 cp "$SOURCE_PLIST" "$CONTENTS_DIR/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$APP_VERSION" "$CONTENTS_DIR/Info.plist"
