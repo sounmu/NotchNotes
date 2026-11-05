@@ -65,9 +65,13 @@ extension NativeTextViewCoordinator {
         if undoDuringSession {
             rebuildTextStorageAndStyle(textView, from: storage)
         }
+        let binding = $text
+        let editedDocumentID = documentId
         DispatchQueue.main.async { [self] in
-            lastSyncedText = storage
-            text = storage
+            if documentId == editedDocumentID {
+                lastSyncedText = storage
+            }
+            binding.wrappedValue = storage
         }
     }
 

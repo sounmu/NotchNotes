@@ -216,6 +216,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     }
 
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.updateTextBinding($text)
         guard let textView = nsView.documentView as? NSTextView else { return }
 
         let isNodeSwitch = context.coordinator.documentId != documentId

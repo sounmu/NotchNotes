@@ -21,6 +21,9 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var documentId: String?
     var scrollYByDocumentID: [String: CGFloat] = [:]
     @Binding var text: String
+    func updateTextBinding(_ binding: Binding<String>) {
+        _text = binding
+    }
     @Binding var isWikiLinkActive: Bool
     var fontName: String
     var fontSize: CGFloat
@@ -33,6 +36,26 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     private var busObservers: [NSObjectProtocol] = []
     private var registeredAppearanceObserverName: Notification.Name?
     weak var textView: NSTextView?
+    private weak var editingUndoManager: UndoManager?
+    private weak var undoTextView: NSTextView?
+
+    func observeEditingUndo(in view: NSTextView) {
+        guard let manager = view.undoManager else { return }
+        undoTextView = view
+        guard editingUndoManager !== manager else { return }
+        for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+            if let old = editingUndoManager { NotificationCenter.default.removeObserver(self, name: name, object: old) }
+            NotificationCenter.default.addObserver(self, selector: #selector(editingUndoDidFinish(_:)), name: name, object: manager)
+        }
+        editingUndoManager = manager
+    }
+
+    @objc private func editingUndoDidFinish(_ notification: Notification) {
+        guard !isWritingToolsActive, let view = undoTextView else { return }
+        // AppKit can undo text storage without sending the delegate a change
+        // notification (notably when undoing the first insertion to empty).
+        textDidChange(Notification(name: NSText.didChangeNotification, object: view))
+    }
     var layoutBridge: LayoutBridge?
     var layoutDelegate: MarkdownLayoutManagerDelegate?
     var onLinkClick: ((String) -> Void)?

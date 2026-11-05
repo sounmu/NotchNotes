@@ -81,9 +81,18 @@ final class NoteStore: ObservableObject {
     }
 
     func updateText(_ nextText: String) {
-        guard tabs[activeIndex].text != nextText else { return }
-        tabs[activeIndex].text = nextText
-        clampSelection(for: tabs[activeIndex].id)
+        updateText(nextText, for: activeTabID)
+    }
+
+    func text(for id: UUID) -> String {
+        tabs.first(where: { $0.id == id })?.text ?? ""
+    }
+
+    func updateText(_ nextText: String, for id: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }),
+              tabs[index].text != nextText else { return }
+        tabs[index].text = nextText
+        clampSelection(for: id)
         scheduleSave()
     }
 

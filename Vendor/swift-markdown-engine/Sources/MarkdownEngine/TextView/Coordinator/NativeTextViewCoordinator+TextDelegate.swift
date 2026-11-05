@@ -65,10 +65,19 @@ extension NativeTextViewCoordinator {
                 textStorage: tv.textStorage
             )
             self.wikiLinkMetadata = storageState.metadata
-            if storageState.storage != self.lastSyncedText {
+            // An earlier change may still be queued even when this value equals
+            // lastSyncedText (type, then undo in the same event). Queue the final
+            // snapshot too, and deduplicate against the captured binding at delivery.
+            do {
+                let binding = self.$text
+                let editedDocumentID = self.documentId
                 DispatchQueue.main.async {
-                    self.lastSyncedText = storageState.storage
-                    self.text = storageState.storage
+                    if self.documentId == editedDocumentID {
+                        self.lastSyncedText = storageState.storage
+                    }
+                    if binding.wrappedValue != storageState.storage {
+                        binding.wrappedValue = storageState.storage
+                    }
                 }
             }
         }
@@ -304,6 +313,7 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        observeEditingUndo(in: textView)
         if isProgrammaticEdit { return true }
         if isWritingToolsActive { return true }
         pendingEditedRange = NSRange(location: affectedCharRange.location, length: replacementString?.utf16.count ?? 0)

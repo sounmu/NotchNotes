@@ -764,11 +764,12 @@ struct MarkdownNoteEditor: View {
     @State private var pendingInlineReplacement: InlineReplacementRequest?
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        let tabID = store.activeTabID
+        return ZStack(alignment: .topLeading) {
             NativeTextViewWrapper(
                 text: Binding(
-                    get: { store.text },
-                    set: { store.updateText($0) }
+                    get: { store.text(for: tabID) },
+                    set: { store.updateText($0, for: tabID) }
                 ),
                 isWikiLinkActive: $isWikiLinkActive,
                 pendingInlineReplacement: $pendingInlineReplacement,
