@@ -37,13 +37,19 @@ extension NativeTextView {
         let checkboxText = nsText.substring(with: effectiveRange)
         guard checkboxText.range(of: #"\[[ xX]\]"#, options: .regularExpression) != nil else { return nil }
 
+        return toggleTaskCheckbox(in: effectiveRange, isChecked: isChecked)
+    }
+
+    @discardableResult
+    func toggleTaskCheckbox(in effectiveRange: NSRange, isChecked: Bool) -> Bool {
+        guard isEditable, let storage = textStorage,
+              effectiveRange.location != NSNotFound, NSMaxRange(effectiveRange) <= storage.length else { return false }
         let replacement = isChecked ? "[ ]" : "[x]"
-        if shouldChangeText(in: effectiveRange, replacementString: replacement) {
-            storage.replaceCharacters(in: effectiveRange, with: replacement)
+        if MarkdownFormatting.replaceSource(in: self, range: effectiveRange, with: replacement,
+                                             selectionAfter: selectedRange()) {
             storage.addAttribute(.taskCheckbox, value: !isChecked, range: effectiveRange)
             storage.addAttribute(.foregroundColor, value: NSColor.clear, range: effectiveRange)
-            didChangeText()
-            bridge.invalidateDisplay(forCharacterRange: effectiveRange)
+            layoutBridge?.invalidateDisplay(forCharacterRange: effectiveRange)
             if let coord = delegate as? NativeTextViewCoordinator {
                 let paragraph = (storage.string as NSString).paragraphRange(for: effectiveRange)
                 coord.restyleParagraphs([paragraph], in: self)

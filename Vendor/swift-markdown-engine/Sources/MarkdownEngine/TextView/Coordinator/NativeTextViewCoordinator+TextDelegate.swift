@@ -166,9 +166,29 @@ extension NativeTextViewCoordinator {
         previousActiveTokenIndices = activeTokenIndices
     }
 
+    public func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange oldSelectedCharRange: NSRange,
+                         toCharacterRange newSelectedCharRange: NSRange) -> NSRange {
+        guard !isProgrammaticEdit, !isWritingToolsActive, !textView.hasMarkedText(),
+              textView.undoManager?.isUndoing != true, textView.undoManager?.isRedoing != true,
+              configuration.inlineEditingMode == .formatted || MarkdownInlineEditing.navigationSteps[ObjectIdentifier(textView)] != nil else {
+            return newSelectedCharRange
+        }
+        let characterStep = MarkdownInlineEditing.navigationSteps[ObjectIdentifier(textView)] ?? false
+        return MarkdownInlineEditing.selection(in: textView.string as NSString, from: oldSelectedCharRange,
+                                               to: newSelectedCharRange, tokens: parsedDocument(for: textView.string).tokens,
+                                               characterStep: characterStep,
+                                               formatted: configuration.inlineEditingMode == .formatted)
+    }
+
     public func textViewDidChangeSelection(_ notification: Notification) {
         guard let tv = notification.object as? NSTextView else { return }
+        // Do not restyle while an IME (e.g. Korean) is composing; the marked
+        // text owns the selection and must not be disturbed.
+        guard !tv.hasMarkedText() else { return }
         if isWritingToolsActive { return }
+        if !isProgrammaticEdit, formattedTypingState?.styles(in: tv) == nil {
+            formattedTypingState = nil
+        }
         let selRange = tv.selectedRange()
         let currentEventType = NSApp.currentEvent?.type
         // Mouse-/Wake-Fokus auf Link: kein Preview, erst Navigation. Gilt für alle Nicht-Key-Events.
@@ -316,6 +336,8 @@ extension NativeTextViewCoordinator {
         observeEditingUndo(in: textView)
         if isProgrammaticEdit { return true }
         if isWritingToolsActive { return true }
+        // Let the input method commit/replace marked text untouched.
+        if textView.hasMarkedText() { return true }
         pendingEditedRange = NSRange(location: affectedCharRange.location, length: replacementString?.utf16.count ?? 0)
         let currentLen = (textView.string as NSString).length
         let maxR = affectedCharRange.location + affectedCharRange.length
@@ -328,6 +350,60 @@ extension NativeTextViewCoordinator {
             return true
         }
         let parsed = parsedDocument(for: textView.string)
+        if configuration.inlineEditingMode == .formatted, replacementString == "\t",
+           !MarkdownLists.handleInsertion(textView: textView, affectedCharRange: affectedCharRange, replacementString: "\t") {
+            return false
+        }
+        if configuration.inlineEditingMode == .formatted, replacementString == "\n",
+           insertFormattedBreak(in: textView, range: affectedCharRange, hard: false) { return false }
+        if configuration.inlineEditingMode == .formatted,
+           let replacementString, !replacementString.isEmpty {
+            let pending = affectedCharRange == textView.selectedRange() ? formattedTypingState?.styles(in: textView) : nil
+            let styles = pending ?? MarkdownFormattedEditing.replacementStyles(in: textView.string, range: affectedCharRange, tokens: parsed.tokens)
+            if pending != nil || !styles.isEmpty || (affectedCharRange.length > 0 &&
+                MarkdownInlineEditing.formats(in: parsed.tokens).contains(where: {
+                    NSIntersectionRange($0.range, affectedCharRange).length > 0
+                })) {
+                if let edit = MarkdownFormattedEditing.insertion(in: textView.string, range: affectedCharRange,
+                                                                 replacement: replacementString, styles: styles, tokens: parsed.tokens) {
+                    applyFormattedEdit(edit, to: textView, styles: styles)
+                    return false
+                }
+            }
+        }
+        if let replacementString, affectedCharRange.length > 0 {
+            var semanticRange = affectedCharRange
+            let selection = textView.selectedRange()
+            // Direct deleteBackward/deleteForward calls can bypass doCommandBy.
+            let markers = configuration.inlineEditingMode == .formatted
+                ? MarkdownInlineEditing.hiddenMarkerRanges(in: textView.string, tokens: parsed.tokens)
+                : MarkdownInlineEditing.formats(in: parsed.tokens).flatMap(\.markerRanges)
+            let touchesMarker = markers.contains { NSIntersectionRange($0, affectedCharRange).length > 0 }
+            if replacementString.isEmpty && selection.length == 0 && touchesMarker
+                && affectedCharRange.length == 1 {
+                let backward = NSMaxRange(affectedCharRange) <= selection.location
+                if let character = MarkdownInlineEditing.characterRange(
+                    in: textView.string as NSString, at: selection.location,
+                    backward: backward, tokens: parsed.tokens,
+                    formatted: configuration.inlineEditingMode == .formatted
+                ) {
+                    semanticRange = character
+                } else {
+                    return false
+                }
+            }
+            if let edit = MarkdownInlineEditing.edit(in: textView.string, range: semanticRange,
+                                                      replacement: replacementString, tokens: parsed.tokens,
+                                                      formatted: configuration.inlineEditingMode == .formatted) {
+                applyInlineEdit(edit, to: textView)
+                return false
+            }
+            if semanticRange != affectedCharRange {
+                applyInlineEdit(.init(range: semanticRange, replacement: replacementString,
+                                      caret: semanticRange.location + replacementString.utf16.count), to: textView)
+                return false
+            }
+        }
         pendingPreEditActiveTokenIndices = MarkdownDetection.computeActiveTokenIndices(
             selectionRange: textView.selectedRange(),
             tokens: parsed.tokens,
@@ -357,6 +433,45 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if !isProgrammaticEdit && !isWritingToolsActive && !textView.hasMarkedText(),
+           textView.undoManager?.isUndoing != true, textView.undoManager?.isRedoing != true,
+           commandSelector == #selector(NSResponder.deleteBackward(_:))
+            || commandSelector == #selector(NSResponder.deleteForward(_:)) {
+            let tokens = parsedDocument(for: textView.string).tokens
+            var range = textView.selectedRange()
+            if range.length == 0 {
+                guard let character = MarkdownInlineEditing.characterRange(
+                    in: textView.string as NSString, at: range.location,
+                    backward: commandSelector == #selector(NSResponder.deleteBackward(_:)), tokens: tokens,
+                    formatted: configuration.inlineEditingMode == .formatted
+                ) else { return true }
+                range = character
+            }
+            if let edit = MarkdownInlineEditing.edit(in: textView.string, range: range, replacement: "", tokens: tokens,
+                                                    formatted: configuration.inlineEditingMode == .formatted) {
+                applyInlineEdit(edit, to: textView)
+                return true
+            }
+            if textView.selectedRange().length == 0 {
+                let caret = textView.selectedRange().location
+                let expected = commandSelector == #selector(NSResponder.deleteBackward(_:)) ? NSMaxRange(range) : range.location
+                if expected != caret {
+                    applyInlineEdit(.init(range: range, replacement: "", caret: range.location), to: textView)
+                    return true
+                }
+            }
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            // Shift+Return is delivered as insertNewline:, so inspect the
+            // actual key event rather than assuming a plain Return.
+            let event = NSApp.currentEvent
+            let isShiftPressed = event?.type == .keyDown
+                && event?.modifierFlags.contains(.shift) == true
+            return MarkdownInputHandler.handleInsertNewline(
+                textView: textView,
+                isShiftPressed: isShiftPressed
+            )
+        }
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
             return handleBacktab(textView)
         }
@@ -372,6 +487,62 @@ extension NativeTextViewCoordinator {
         DispatchQueue.main.async {
             self.onLinkClick?(target)
         }
+        return true
+    }
+
+    private func applyInlineEdit(_ edit: MarkdownInlineEditing.Edit, to textView: NSTextView) {
+        let styles: Set<MarkdownFormatting.InlineStyle> = configuration.inlineEditingMode == .formatted
+            ? (formattedTypingState?.styles(in: textView)
+                ?? MarkdownFormattedEditing.replacementStyles(in: textView.string, range: edit.range)) : []
+        isProgrammaticEdit = true
+        defer { isProgrammaticEdit = false }
+        pendingEditedRange = NSRange(location: edit.range.location, length: edit.replacement.utf16.count)
+        // AppKit owns the replacement and its inverse, including native undo.
+        textView.insertText(edit.replacement, replacementRange: edit.range)
+        textView.setSelectedRange(NSRange(location: edit.caret, length: 0))
+        if configuration.inlineEditingMode == .formatted {
+            formattedTypingState = .init(source: textView.string, caret: edit.caret, styles: styles)
+        }
+    }
+
+    func applyFormattedEdit(_ edit: MarkdownFormattedEditing.Edit, to textView: NSTextView,
+                            styles: Set<MarkdownFormatting.InlineStyle>) {
+        let wasProgrammatic = isProgrammaticEdit
+        isProgrammaticEdit = true
+        defer { isProgrammaticEdit = wasProgrammatic }
+        pendingEditedRange = NSRange(location: edit.range.location, length: edit.replacement.utf16.count)
+        textView.insertText(edit.replacement, replacementRange: edit.range)
+        textView.setSelectedRange(edit.selection)
+        formattedTypingState = .init(source: textView.string, caret: edit.selection.location, styles: styles)
+    }
+
+    /// Break commands carry structural text (list prefixes), not styled typing.
+    /// Serialize the intersecting inline pair once, keeping the new prefix plain.
+    func insertFormattedBreak(in view: NSTextView, range: NSRange, hard: Bool) -> Bool {
+        guard configuration.inlineEditingMode == .formatted, !view.hasMarkedText(), !isProgrammaticEdit else { return false }
+        let styles = formattedTypingState?.styles(in: view)
+            ?? MarkdownFormattedEditing.replacementStyles(in: view.string, range: range)
+        guard !styles.isEmpty else { return false }
+        let source = view.string as NSString
+        let lineRange = source.lineRange(for: NSRange(location: range.location, length: 0))
+        if !hard, range.length == 0, configuration.lists.helpersEnabled,
+           let context = MarkdownLists.listContext(for: source.substring(with: lineRange)),
+           (source.substring(with: lineRange) as NSString).substring(from: context.prefixLength)
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let handled = MarkdownLists.outdentOrTerminateEmptyItem(textView: view, context: context, lineRange: lineRange)
+            if handled { formattedTypingState = .init(source: view.string, caret: view.selectedRange().location, styles: styles) }
+            return handled
+        }
+        var replacement = hard && !styles.contains(.code) ? "  \n" : "\n"
+        if configuration.lists.helpersEnabled, !styles.contains(.code), let owning = MarkdownLists.owningListContext(for: source, lineRange: lineRange),
+           range.location >= lineRange.location + owning.contentStart,
+           NSMaxRange(range) <= NSMaxRange(lineRange) {
+            replacement += hard ? owning.context.continuationIndent
+                : owning.context.leadingWhitespace + MarkdownLists.continuationText(for: owning.context)
+        }
+        guard let edit = MarkdownFormattedEditing.insertion(in: view.string, range: range,
+            replacement: replacement, styles: styles, literal: true) else { return false }
+        applyFormattedEdit(edit, to: view, styles: styles)
         return true
     }
 
@@ -399,6 +570,12 @@ extension NativeTextViewCoordinator {
         let caretLoc = textView.selectedRange().location
         let lineRange = nsText.lineRange(for: NSRange(location: caretLoc, length: 0))
         let line = nsText.substring(with: lineRange)
+
+        // Outdent a whole Shift+Enter list item, including its continuation
+        // lines, in one undoable edit.
+        if let block = MarkdownLists.listItemBlock(for: nsText, location: caretLoc) {
+            return MarkdownLists.outdentListItemBlock(textView, block: block)
+        }
 
         let pattern = #"^([\t ]*)((\d+|a)\.|-|•)\s"#
         let regex = try? NSRegularExpression(pattern: pattern)

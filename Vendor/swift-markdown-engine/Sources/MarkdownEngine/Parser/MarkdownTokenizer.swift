@@ -25,7 +25,7 @@ private extension MarkdownTokenizer {
         options: [.anchorsMatchLines]
     )
     static let taskListRegex = try! NSRegularExpression(
-        pattern: #"^([ \t]*)([-•]|\d+\.)([ \t]+)(\[[ xX]\])(?=[ \t])"#,
+        pattern: #"^([ \t]*)([-+*•]|\d+[.)])([ \t]+)(\[[ xX]\])(?=[ \t])"#,
         options: [.anchorsMatchLines]
     )
     static let codeBlockRegex = try! NSRegularExpression(
@@ -34,10 +34,6 @@ private extension MarkdownTokenizer {
     )
     static let strikethroughRegex = try! NSRegularExpression(
         pattern: #"(?<!~)~~(?=[^\s~])([^\r\n]*?[^\s~])~~(?!~)"#,
-        options: []
-    )
-    static let inlineCodeRegex = try! NSRegularExpression(
-        pattern: "`([^`\\n]+)`",
         options: []
     )
     static let blockLatexRegex = try! NSRegularExpression(
@@ -62,7 +58,11 @@ enum MarkdownTokenizer {
         tokens.append(contentsOf: parseEmphasisTokens(in: text))
 
         // Strikethrough ~~text~~ (single line)
-        for match in strikethroughRegex.matches(in: text, options: [], range: fullRange) {
+        let strikeSource = NSMutableString(string: text)
+        for escape in MarkdownEscaping.markerRanges(in: text, tokens: []) {
+            strikeSource.replaceCharacters(in: NSRange(location: escape.location + 1, length: 1), with: "\u{FFFC}")
+        }
+        for match in strikethroughRegex.matches(in: strikeSource as String, options: [], range: fullRange) {
             let full = match.range(at: 0)
             let content = match.range(at: 1)
             let openMarker = NSRange(location: full.location, length: 2)
@@ -172,15 +172,48 @@ enum MarkdownTokenizer {
         }
 
         // Inline code `code`
-        for match in inlineCodeRegex.matches(in: text, options: [], range: fullRange) {
-            let full = match.range(at: 0)
-            let content = match.range(at: 1)
-            let openBacktick = NSRange(location: full.location, length: 1)
-            let closeBacktick = NSRange(location: full.location + full.length - 1, length: 1)
+        let blocks = tokens.filter { $0.kind == .codeBlock }
+        var position = 0
+        while position < nsText.length {
+            guard nsText.character(at: position) == 96, !MarkdownEscaping.isEscaped(position, in: nsText) else {
+                position += 1; continue
+            }
+            if let block = blocks.first(where: { NSLocationInRange(position, $0.range) }) {
+                position = NSMaxRange(block.range); continue
+            }
+            let start = position
+            while position < nsText.length, nsText.character(at: position) == 96 { position += 1 }
+            let width = position - start
+            let contentStart = position
+            var search = position
+            var closing: Int?
+            while search < nsText.length {
+                let character = nsText.character(at: search)
+                if character == 10 || character == 13 { break }
+                if character != 96 { search += 1; continue }
+                let runStart = search
+                while search < nsText.length, nsText.character(at: search) == 96 { search += 1 }
+                if search - runStart == width { closing = runStart; break }
+            }
+            guard let closing, closing > contentStart else { continue }
+            let full = NSRange(location: start, length: closing + width - start)
+            var content = NSRange(location: contentStart, length: closing - contentStart)
+            // CommonMark padding keeps content beginning/ending in a backtick
+            // distinct from the delimiter run.
+            if content.length >= 2 {
+                let value = nsText.substring(with: content)
+                if value.hasPrefix(" "), value.hasSuffix(" "), !value.allSatisfy({ $0 == " " }) {
+                    content.location += 1
+                    content.length -= 2
+                }
+            }
+            let openBacktick = NSRange(location: full.location, length: content.location - full.location)
+            let closeBacktick = NSRange(location: NSMaxRange(content), length: NSMaxRange(full) - NSMaxRange(content))
             tokens.append(MarkdownToken(kind: .inlineCode,
                                         range: full,
                                         contentRange: content,
-                                        markerRanges: [openBacktick, closeBacktick]))
+                                         markerRanges: [openBacktick, closeBacktick]))
+            position = NSMaxRange(full)
         }
 
         // Inline LaTeX $formula$

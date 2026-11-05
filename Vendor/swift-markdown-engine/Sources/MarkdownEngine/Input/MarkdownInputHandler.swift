@@ -15,6 +15,15 @@ enum MarkdownInputHandler {
         return MarkdownLists.handleInsertion(textView: textView, affectedCharRange: affectedCharRange, replacementString: replacementString)
     }
 
+    /// Shift+Enter inserts a standard Markdown hard break (two spaces + LF).
+    /// Inside a list item the continuation line is aligned with the item
+    /// content; code blocks keep a plain newline.
+    /// Returns `true` when the command was handled.
+    static func handleInsertNewline(textView: NSTextView, isShiftPressed: Bool) -> Bool {
+        guard isShiftPressed, !textView.hasMarkedText() else { return false }
+        return MarkdownLists.insertHardBreak(textView: textView)
+    }
+
     // MARK: - Block LaTeX Auto-Wrap
 
     private static func insertTextProgrammatically(_ textView: NSTextView, text: String, at range: NSRange, cursorAfter: Int) {

@@ -51,7 +51,14 @@ extension NativeTextView {
         guard fragStart != NSNotFound else { return false }
         let docLen = (string as NSString).length
         window?.makeFirstResponder(self)
-        setSelectedRange(NSRange(location: min(max(fragStart + clampedInFrag, 0), docLen), length: 0))
+        var selection = NSRange(location: min(max(fragStart + clampedInFrag, 0), docLen), length: 0)
+        if configuration.inlineEditingMode == .formatted {
+            selection = MarkdownInlineEditing.selection(
+                in: string as NSString, from: selectedRange(), to: selection,
+                tokens: MarkdownTokenizer.parseTokens(in: string), characterStep: false, formatted: true
+            )
+        }
+        setSelectedRange(selection)
         return true
     }
 }

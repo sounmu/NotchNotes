@@ -60,6 +60,7 @@ final class NativeTextView: NSTextView {
 
     // AppKit doesn't fire textDidChange for setMarkedText mutations, so Apple's inline-prediction inserts the completion with base typingAttributes and heading lines flicker to body font; restyle the paragraph here to reapply heading font.
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        captureFormattedCompositionIfNeeded(replacementRange: replacementRange)
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
         guard hasMarkedText(),
               let coord = delegate as? NativeTextViewCoordinator else { return }

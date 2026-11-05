@@ -275,6 +275,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         }
         textView.isEditable = isEditable
         textView.isSelectable = isEditable
+        if context.coordinator.configuration.inlineEditingMode != configuration.inlineEditingMode {
+            context.coordinator.configuration.inlineEditingMode = configuration.inlineEditingMode
+            (textView as? NativeTextView)?.configuration.inlineEditingMode = configuration.inlineEditingMode
+            context.coordinator.didInitialFormatting = false
+        }
         textView.insertionPointColor = isEditable ? context.coordinator.configuration.theme.bodyText : .clear
         let fontChanged = (context.coordinator.fontName != fontName) || (context.coordinator.fontSize != fontSize)
         if let pendingInlineReplacement {

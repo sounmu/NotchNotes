@@ -16,6 +16,13 @@
 import AppKit
 import Foundation
 
+/// Inline source remains Markdown in both modes. Formatted editing keeps
+/// delimiters hidden and exposes formatting commands over visible content.
+public enum InlineEditingMode: Sendable {
+    case livePreview
+    case formatted
+}
+
 // MARK: - Top-level Configuration
 
 /// All tunable values for the Markdown editor engine grouped by concern.
@@ -25,6 +32,8 @@ import Foundation
 /// owns the values that belong together. Default values are the production
 /// defaults used by the Nodes app and have been chosen empirically.
 public struct MarkdownEditorConfiguration: Sendable {
+
+    public var inlineEditingMode: InlineEditingMode
 
     public var theme: MarkdownEditorTheme
     public var services: MarkdownEditorServices
@@ -46,6 +55,7 @@ public struct MarkdownEditorConfiguration: Sendable {
     public var textInsets: TextInsets
 
     public init(
+        inlineEditingMode: InlineEditingMode = .livePreview,
         theme: MarkdownEditorTheme = .default,
         services: MarkdownEditorServices = .default,
         markers: MarkerStyle = .default,
@@ -65,6 +75,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         scrollers: ScrollersPolicy = .default,
         textInsets: TextInsets = .default
     ) {
+        self.inlineEditingMode = inlineEditingMode
         self.theme = theme
         self.services = services
         self.markers = markers

@@ -47,6 +47,13 @@ extension MarkdownStyler {
 
     // MARK: Bold / Italic / Bold+Italic
 
+    private static func inlineTokenIsLiteral(_ token: MarkdownToken, in ctx: StylingContext) -> Bool {
+        if ctx.configuration.inlineEditingMode == .formatted {
+            return ctx.codeTokens.contains { NSIntersectionRange($0.range, token.range) == token.range }
+        }
+        return MarkdownDetection.isInsideCodeBlock(range: token.range, codeTokens: ctx.codeTokens)
+    }
+
     static func styleEmphasis(_ ctx: StylingContext) -> [StyledRange] {
         // Per-char trait map collapsed into contiguous font runs so nested emphasis combines instead of overwriting.
         let len = ctx.nsText.length
@@ -64,7 +71,7 @@ extension MarkdownStyler {
             case .boldItalic: mask = boldBit | italicBit
             default: continue
             }
-            if MarkdownDetection.isInsideCodeBlock(range: token.range, codeTokens: ctx.codeTokens) { continue }
+            if inlineTokenIsLiteral(token, in: ctx) { continue }
             let r = token.contentRange
             let upper = min(r.location + r.length, len)
             for i in max(r.location, 0)..<upper {
@@ -95,6 +102,10 @@ extension MarkdownStyler {
             attrs.append((range, [.font: font]))
             i = j
         }
+        for token in ctx.tokens where token.kind == .bold || token.kind == .italic || token.kind == .boldItalic {
+            if inlineTokenIsLiteral(token, in: ctx) { continue }
+            appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
+        }
         return attrs
     }
 
@@ -103,7 +114,7 @@ extension MarkdownStyler {
     static func styleStrikethrough(_ ctx: StylingContext) -> [StyledRange] {
         var attrs: [StyledRange] = []
         for token in ctx.tokens where token.kind == .strikethrough {
-            if MarkdownDetection.isInsideCodeBlock(range: token.range, codeTokens: ctx.codeTokens) { continue }
+            if inlineTokenIsLiteral(token, in: ctx) { continue }
             let mutedText = ctx.configuration.theme.mutedText
             attrs.append((token.contentRange, [
                 .foregroundColor: mutedText,

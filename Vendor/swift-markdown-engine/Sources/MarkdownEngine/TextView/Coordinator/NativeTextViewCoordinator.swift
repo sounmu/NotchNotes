@@ -18,7 +18,14 @@ import SwiftUI
 /// in extensions (Autocorrect, CodeBlocks, Find, InlineSelection,
 /// Notifications, Restyling, TextDelegate, WritingTools).
 public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
-    var documentId: String?
+    var documentId: String? {
+        didSet {
+            if oldValue != documentId {
+                formattedTypingState = nil
+                formattedCompositionStyles = nil
+            }
+        }
+    }
     var scrollYByDocumentID: [String: CGFloat] = [:]
     @Binding var text: String
     func updateTextBinding(_ binding: Binding<String>) {
@@ -29,6 +36,10 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var fontSize: CGFloat
     var configuration: MarkdownEditorConfiguration = .default {
         didSet {
+            if oldValue.inlineEditingMode != configuration.inlineEditingMode {
+                formattedTypingState = nil
+                formattedCompositionStyles = nil
+            }
             subscribeToBusNotifications(replacing: oldValue.services.bus)
             subscribeToAppearanceNotification()
         }
@@ -52,6 +63,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
 
     @objc private func editingUndoDidFinish(_ notification: Notification) {
         guard !isWritingToolsActive, let view = undoTextView else { return }
+        formattedTypingState = nil
         // AppKit can undo text storage without sending the delegate a change
         // notification (notably when undoing the first insertion to empty).
         textDidChange(Notification(name: NSText.didChangeNotification, object: view))
@@ -67,6 +79,8 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var didEnsureLayoutForCurrentDocument: Bool = false
     var lastSyncedText: String
     var isProgrammaticEdit: Bool = false
+    var formattedTypingState: MarkdownFormattedEditing.TypingState?
+    var formattedCompositionStyles: Set<MarkdownFormatting.InlineStyle>?
     var isWritingToolsActive: Bool = false
     var wtStartDocumentId: String?
     weak var wtChildWindow: NSWindow?

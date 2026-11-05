@@ -175,10 +175,14 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     func isSelectionBold(in nsText: NSString, range: NSRange) -> Bool {
+        if configuration.inlineEditingMode == .formatted, range.length == 0,
+           let tv = textView, let styles = formattedTypingState?.styles(in: tv) { return styles.contains(.bold) }
         return enclosingBoldToken(for: range, in: nsText as String) != nil
     }
 
     func isSelectionItalic(in nsText: NSString, range: NSRange) -> Bool {
+        if configuration.inlineEditingMode == .formatted, range.length == 0,
+           let tv = textView, let styles = formattedTypingState?.styles(in: tv) { return styles.contains(.italic) }
         return enclosingItalicToken(for: range, in: nsText as String) != nil
     }
 
@@ -193,13 +197,9 @@ extension NativeTextViewWrapper.Coordinator {
         let nsText = tv.string as NSString
         let content = nsText.substring(with: token.contentRange)
         let newText = leftReplacement + content + rightReplacement
-        if tv.shouldChangeText(in: token.range, replacementString: newText) {
-            tv.replaceCharacters(in: token.range, with: newText)
-            tv.didChangeText()
-            let newSelectionLocation = token.range.location + leftReplacement.count
-            tv.setSelectedRange(NSRange(location: newSelectionLocation, length: content.count))
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        let selection = NSRange(location: token.range.location + leftReplacement.utf16.count,
+                                length: content.utf16.count)
+        MarkdownFormatting.replaceSource(in: tv, range: token.range, with: newText, selectionAfter: selection)
     }
 
     func isSelectionHeading(level: Int, in nsText: NSString, range: NSRange) -> Bool {
@@ -217,22 +217,21 @@ extension NativeTextViewWrapper.Coordinator {
 
     private func applyHeading(level: Int) {
         guard let tv = textView else { return }
+        if MarkdownFormatting.applyBlock(.heading(level), in: tv) { return }
         let nsText = tv.string as NSString
         let range = tv.selectedRange()
         let lineRange = nsText.lineRange(for: range)
-        let rawLine = nsText.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
-        var content = rawLine
+        var contentsEnd = 0
+        nsText.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: lineRange)
+        let rawLine = nsText.substring(with: NSRange(location: lineRange.location, length: contentsEnd - lineRange.location))
+        let suffix = nsText.substring(with: NSRange(location: contentsEnd, length: NSMaxRange(lineRange) - contentsEnd))
+        var content = String(rawLine.drop(while: { $0 == " " || $0 == "\t" }))
         while content.hasPrefix("#") { content.removeFirst() }
-        content = content.trimmingCharacters(in: .whitespaces)
+        content = String(content.drop(while: { $0 == " " || $0 == "\t" }))
         let prefix = String(repeating: "#", count: level) + " "
-        let newLine = prefix + content
-        if tv.shouldChangeText(in: lineRange, replacementString: newLine) {
-            tv.replaceCharacters(in: lineRange, with: newLine)
-            tv.didChangeText()
-            let newSel = NSRange(location: lineRange.location + prefix.count, length: content.count)
-            tv.setSelectedRange(newSel)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        let newLine = prefix + content + suffix
+        let selection = NSRange(location: lineRange.location + prefix.utf16.count, length: content.utf16.count)
+        MarkdownFormatting.replaceSource(in: tv, range: lineRange, with: newLine, selectionAfter: selection)
     }
 
     @objc func didMarkdownHeading(_ sender: NSMenuItem) {
@@ -244,34 +243,33 @@ extension NativeTextViewWrapper.Coordinator {
         let nsText = tv.string as NSString
         let selRange = tv.selectedRange()
         let startLine = nsText.lineRange(for: selRange)
-        let originalLine = nsText.substring(with: startLine)
-        let lineText = originalLine.trimmingCharacters(in: .newlines)
+        var contentsEnd = 0
+        nsText.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: startLine)
+        let lineText = nsText.substring(with: NSRange(location: startLine.location, length: contentsEnd - startLine.location))
         var content = lineText
         if content.hasPrefix(prefix) {
             content = String(content.dropFirst(prefix.count))
         }
         let newLine = prefix + content
-        let suffix = originalLine.hasSuffix("\n") ? "\n" : ""
+        let suffix = nsText.substring(with: NSRange(location: contentsEnd, length: NSMaxRange(startLine) - contentsEnd))
         let replacement = newLine + suffix
-        if tv.shouldChangeText(in: startLine, replacementString: replacement) {
-            tv.replaceCharacters(in: startLine, with: replacement)
-            tv.didChangeText()
-            let newSel = NSRange(location: startLine.location + prefix.count, length: content.count)
-            tv.setSelectedRange(newSel)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        let selection = NSRange(location: startLine.location + prefix.utf16.count, length: content.utf16.count)
+        MarkdownFormatting.replaceSource(in: tv, range: startLine, with: replacement, selectionAfter: selection)
     }
 
     @objc func didMarkdownUnorderedList(_ sender: Any?) {
+        if let tv = textView, MarkdownFormatting.applyBlock(.unorderedList, in: tv) { return }
         applyList(prefix: "\t• ")
     }
 
     @objc func didMarkdownOrderedList(_ sender: Any?) {
+        if let tv = textView, MarkdownFormatting.applyBlock(.orderedList, in: tv) { return }
         applyList(prefix: "1. ")
     }
 
     @objc func didMarkdownBold(_ sender: Any?) {
         guard let tv = textView else { return }
+        if MarkdownFormatting.apply(.bold, in: tv) { return }
         let range = tv.selectedRange()
 
         if let token = enclosingBoldToken(for: range, in: tv.string) {
@@ -291,6 +289,7 @@ extension NativeTextViewWrapper.Coordinator {
 
     @objc func didMarkdownItalic(_ sender: Any?) {
         guard let tv = textView else { return }
+        if MarkdownFormatting.apply(.italic, in: tv) { return }
         let range = tv.selectedRange()
 
         if let token = enclosingItalicToken(for: range, in: tv.string) {
@@ -312,12 +311,8 @@ extension NativeTextViewWrapper.Coordinator {
         guard let tv = textView else { return }
         let range = tv.selectedRange()
         let insertion = marker + marker
-        if tv.shouldChangeText(in: range, replacementString: insertion) {
-            tv.replaceCharacters(in: range, with: insertion)
-            tv.didChangeText()
-            tv.setSelectedRange(NSRange(location: range.location + marker.count, length: 0))
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        let selection = NSRange(location: range.location + marker.utf16.count, length: 0)
+        MarkdownFormatting.replaceSource(in: tv, range: range, with: insertion, selectionAfter: selection)
     }
 
     private func wrapSelection(with marker: String) {
@@ -326,20 +321,16 @@ extension NativeTextViewWrapper.Coordinator {
         let range = tv.selectedRange()
         let original = nsText.substring(with: range)
         let leadingWS = original.prefix { $0.isWhitespace }.count
-        let trailingWS = original.reversed().prefix { $0.isWhitespace }.count
+        let trailingWS = original.dropFirst(leadingWS).reversed().prefix { $0.isWhitespace }.count
         let coreStart = original.index(original.startIndex, offsetBy: leadingWS)
         let coreEnd = original.index(original.endIndex, offsetBy: -trailingWS)
         let core = coreStart <= coreEnd ? String(original[coreStart..<coreEnd]) : ""
         let leading = String(original[..<coreStart])
         let trailing = String(original[coreEnd...])
         let newText = leading + marker + core + marker + trailing
-        if tv.shouldChangeText(in: range, replacementString: newText) {
-            tv.replaceCharacters(in: range, with: newText)
-            tv.didChangeText()
-            let newRange = NSRange(location: range.location + leadingWS + marker.count, length: core.count)
-            tv.setSelectedRange(newRange)
-            DispatchQueue.main.async { self.text = tv.string }
-        }
+        let selection = NSRange(location: range.location + leading.utf16.count + marker.utf16.count,
+                                length: core.utf16.count)
+        MarkdownFormatting.replaceSource(in: tv, range: range, with: newText, selectionAfter: selection)
     }
 }
 
@@ -351,15 +342,17 @@ extension NativeTextViewWrapper.Coordinator: NSMenuItemValidation {
         let range = tv.selectedRange()
         switch menuItem.action {
         case #selector(didMarkdownBold(_:)):
-            menuItem.state = enclosingBoldToken(for: range, in: tv.string) != nil ? .on : .off
+            menuItem.state = isSelectionBold(in: nsText, range: range) ? .on : .off
             return true
         case #selector(didMarkdownItalic(_:)):
-            menuItem.state = enclosingItalicToken(for: range, in: tv.string) != nil ? .on : .off
+            menuItem.state = isSelectionItalic(in: nsText, range: range) ? .on : .off
             return true
         case #selector(didMarkdownHeading(_:)):
+            if configuration.inlineEditingMode == .formatted { return tv.isEditable }
             return !isSelectionHeading(level: menuItem.tag, in: nsText, range: range)
         case #selector(didMarkdownUnorderedList(_:)),
-             #selector(didMarkdownOrderedList(_:)):
+              #selector(didMarkdownOrderedList(_:)):
+            if configuration.inlineEditingMode == .formatted { return tv.isEditable }
             return !isSelectionList(in: nsText, range: range)
         case #selector(didCopyEmbeddedImage(_:)):
             return menuItem.representedObject is EmbeddedImageRequest

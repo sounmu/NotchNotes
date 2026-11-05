@@ -53,7 +53,10 @@ struct TextStylingService {
         precomputedTokens: [MarkdownToken]? = nil,
         configuration: MarkdownEditorConfiguration = .default
     ) {
-        let paragraphs = normalize(paragraphCandidates)
+        let paragraphs = normalize(expandListBlocks(
+            paragraphCandidates,
+            in: textView.string as NSString
+        ))
 
         textView.typingAttributes = makeBaseTypingAttributes(
             font: baseFont,
@@ -110,6 +113,21 @@ struct TextStylingService {
         // No ensureLayout here:
         textView.setNeedsDisplay(textView.visibleRect)
         (textView as? NativeTextView)?.ensureVisibleLayout()
+    }
+
+    /// A Shift+Enter list item is laid out as a unit: every continuation
+    /// line's indent is derived from the marker line's content offset. When
+    /// one line is restyled (typing, checkbox toggle, marker edit), restyle
+    /// its whole block so the other lines don't keep a stale offset.
+    private static func expandListBlocks(_ candidates: [NSRange], in nsText: NSString) -> [NSRange] {
+        var expanded: [NSRange] = []
+        for candidate in candidates where candidate.location != NSNotFound && candidate.length > 0 {
+            expanded.append(candidate)
+            if let block = MarkdownLists.listItemBlock(for: nsText, location: candidate.location) {
+                expanded.append(contentsOf: block.lineRanges)
+            }
+        }
+        return expanded
     }
 
     private static func normalize(_ candidates: [NSRange]) -> [NSRange] {

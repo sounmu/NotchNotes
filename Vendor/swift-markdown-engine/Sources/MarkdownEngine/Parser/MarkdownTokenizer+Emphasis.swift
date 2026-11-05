@@ -37,6 +37,7 @@ extension MarkdownTokenizer {
     }
 
     private struct AsteriskRun {
+        let delimiter: UInt16
         let originalStart: Int
         let originalLength: Int
         var leftEdge: Int
@@ -54,17 +55,17 @@ extension MarkdownTokenizer {
         var i = 0
         while i < len {
             let c = nsText.character(at: i)
-            if c == 0x0A {
+            if c == 0x0A || c == 0x0D {
                 lineIdx += 1
                 i += 1
                 continue
             }
-            if c != 0x2A {
+            if (c != 0x2A && c != 0x5F) || MarkdownEscaping.isEscaped(i, in: nsText) {
                 i += 1
                 continue
             }
             var j = i
-            while j < len, nsText.character(at: j) == 0x2A {
+            while j < len, nsText.character(at: j) == c {
                 j += 1
             }
             let beforeCharIdx = i - 1
@@ -76,12 +77,13 @@ extension MarkdownTokenizer {
             let leftFlanking = !afterWs && (!afterPunct || beforeWs || beforePunct)
             let rightFlanking = !beforeWs && (!beforePunct || afterWs || afterPunct)
             result.append(AsteriskRun(
+                delimiter: c,
                 originalStart: i,
                 originalLength: j - i,
                 leftEdge: i,
                 rightEdge: j,
-                openable: leftFlanking,
-                closeable: rightFlanking,
+                openable: leftFlanking && (c != 0x5F || !rightFlanking || beforePunct),
+                closeable: rightFlanking && (c != 0x5F || !leftFlanking || afterPunct),
                 lineIdx: lineIdx
             ))
             i = j
@@ -98,6 +100,7 @@ extension MarkdownTokenizer {
         var sp = stack.count - 1
         while sp >= 0 && runs[closerIdx].remaining > 0 {
             let openerIdx = stack[sp]
+            if runs[openerIdx].delimiter != runs[closerIdx].delimiter { sp -= 1; continue }
             if runs[openerIdx].lineIdx != runs[closerIdx].lineIdx {
                 stack.remove(at: sp)
                 sp -= 1

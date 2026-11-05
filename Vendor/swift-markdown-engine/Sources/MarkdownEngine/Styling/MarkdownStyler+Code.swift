@@ -48,8 +48,19 @@ extension MarkdownStyler {
         var attrs: [StyledRange] = []
         for (idx, token) in ctx.tokens.enumerated() where token.kind == .inlineCode {
             let isActive = ctx.activeTokenIndices.contains(idx)
+            var font = ctx.codeFont
+            if ctx.configuration.inlineEditingMode == .formatted {
+                for outer in ctx.tokens where outer.range != token.range && NSIntersectionRange(outer.contentRange, token.range) == token.range {
+                    if outer.kind == .bold || outer.kind == .boldItalic {
+                        font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+                    }
+                    if outer.kind == .italic || outer.kind == .boldItalic {
+                        font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+                    }
+                }
+            }
             attrs.append((token.contentRange, [
-                .font: ctx.codeFont,
+                .font: font,
                 .backgroundColor: ctx.codeBackgroundColor
             ]))
             let inlineMarkerAttributes: [NSAttributedString.Key: Any] = isActive

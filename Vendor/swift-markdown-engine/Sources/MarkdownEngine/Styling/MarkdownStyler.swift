@@ -33,7 +33,7 @@ extension MarkdownStyler {
         "\\[[^\\]\\r\\n]+\\]\\(\\)"
     ].map { try! NSRegularExpression(pattern: $0) }
     static let taskListRegex: NSRegularExpression = try! NSRegularExpression(
-        pattern: #"^([ \t]*)([-•]|\d+\.)([ \t]+)(\[[ xX]\])(?=[ \t])"#,
+        pattern: #"^([ \t]*)([-+*•]|\d+[.)])([ \t]+)(\[[ xX]\])(?=[ \t])"#,
         options: [.anchorsMatchLines]
     )
 }
@@ -152,6 +152,8 @@ enum MarkdownStyler {
             baseFont: baseFont,
             nsText: nsText,
             fullRange: fullRange,
+            caretLocation: caretLocation,
+            codeTokens: codeTokens,
             listsEnabled: listsEnabled,
             defaultLineHeight: baseDefaultLineHeight,
             defaultParagraphSpacing: baseParagraphSpacing,
@@ -172,6 +174,28 @@ enum MarkdownStyler {
         result += styleIncompleteLinkBrackets(ctx)
         result += styleTaskCheckboxes(ctx)
         result += shrinkInactiveMarkers(ctx)
+        // Last, so active-token styling can never reveal formatted delimiters.
+        if configuration.inlineEditingMode == .formatted {
+            // A singular horizontal font matrix gives actual zero glyph advance
+            // in TK2, including the last character in a line. Negative kerning
+            // alone leaves half-glyph caret offsets at run/line boundaries.
+            let matrix = AffineTransform(m11: 0, m12: 0, m21: 0, m22: 1, tX: 0, tY: 0)
+            let descriptor = ctx.inlineMarkerFont.fontDescriptor.addingAttributes([.matrix: matrix])
+            let zeroWidthFont = NSFont(descriptor: descriptor, size: ctx.inlineMarkerFont.pointSize) ?? ctx.inlineMarkerFont
+            for marker in MarkdownInlineEditing.hiddenMarkerRanges(in: text, tokens: tokens) {
+                for offset in marker.location..<NSMaxRange(marker) {
+                    let range = NSRange(location: offset, length: 1)
+                    result.append((range, [
+                        .font: zeroWidthFont,
+                        .foregroundColor: NSColor.clear,
+                        .backgroundColor: NSColor.clear,
+                        .strikethroughStyle: 0,
+                        .underlineStyle: 0,
+                        .kern: 0
+                    ]))
+                }
+            }
+        }
         return result
     }
 }
@@ -393,6 +417,7 @@ extension MarkdownStyler {
             }
             for m in token.markerRanges {
                 attrs.append((m, [
+                    .foregroundColor: NSColor.clear,
                     .font: smallFont,
                     .kern: -smallFont.pointSize
                 ]))

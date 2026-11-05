@@ -26,23 +26,33 @@ extension NativeTextView {
             return
         }
 
-        if let pasted = pasteboard.string(forType: .string) {
-            let sanitized = sanitizePastedText(pasted)
-            if !sanitized.isEmpty {
-                insertText(sanitized, replacementRange: selectedRange())
-                return
-            }
-        }
-
-        if let fileText = textFromPastedFileURL(pasteboard: pasteboard) {
-            let sanitized = sanitizePastedText(fileText)
-            if !sanitized.isEmpty {
-                insertText(sanitized, replacementRange: selectedRange())
-                return
-            }
-        }
+        if insertClipboardText(from: pasteboard) { return }
 
         pasteAsPlainText(sender)
+    }
+
+    func insertClipboardText(from pasteboard: NSPasteboard) -> Bool {
+        guard isEditable else { return false }
+        if configuration.inlineEditingMode == .formatted, !hasMarkedText(),
+           let coordinator = delegate as? NativeTextViewCoordinator,
+           let data = pasteboard.data(forType: .rtf),
+           let content = NSAttributedString(rtf: data, documentAttributes: nil), content.length > 0,
+           let edit = MarkdownFormattedEditing.richTextInsertion(content, in: string, range: selectedRange()) {
+            coordinator.applyFormattedEdit(edit, to: self, styles: [])
+            return true
+        }
+        return insertPlainText(from: pasteboard)
+    }
+
+    /// Whitespace is Markdown content: indentation, hard breaks, and blank
+    /// paragraphs must survive a paste exactly as copied.
+    func insertPlainText(from pasteboard: NSPasteboard) -> Bool {
+        guard isEditable else { return false }
+        guard let text = pasteboard.string(forType: .string)
+                ?? textFromPastedFileURL(pasteboard: pasteboard),
+              !text.isEmpty else { return false }
+        insertText(text, replacementRange: selectedRange())
+        return true
     }
 
     private func insertBlockEmbed(_ embed: String) {
@@ -57,7 +67,9 @@ extension NativeTextView {
         if afterLocation < nsText.length, nsText.character(at: afterLocation) != 0x0A {
             suffix = "\n"
         }
-        insertText(prefix + embed + suffix, replacementRange: sel)
+        let replacement = prefix + embed + suffix
+        MarkdownFormatting.replaceSource(in: self, range: sel, with: replacement,
+            selectionAfter: NSRange(location: sel.location + replacement.utf16.count, length: 0))
     }
 
     /// Reads the textual content of a pasted markdown/text file URL — the
@@ -70,15 +82,6 @@ extension NativeTextView {
             if let s = try? String(contentsOf: url) { return s }
         }
         return nil
-    }
-
-    private func sanitizePastedText(_ s: String) -> String {
-        var out = s
-        if let regex = try? NSRegularExpression(pattern: "\\n{3,}") {
-            let nsRange = NSRange(location: 0, length: (out as NSString).length)
-            out = regex.stringByReplacingMatches(in: out, range: nsRange, withTemplate: "\n\n")
-        }
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
