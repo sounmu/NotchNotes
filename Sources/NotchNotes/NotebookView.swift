@@ -513,7 +513,7 @@ struct MarkdownEditorPanel: View {
 
 struct MarkdownShortcutToolbar: View {
     @ObservedObject var settingsStore: AppSettingsStore
-    let editorInteractionState: EditorInteractionState
+    @ObservedObject var editorInteractionState: EditorInteractionState
 
     var body: some View {
         HStack(alignment: .center, spacing: 4) {
@@ -523,10 +523,21 @@ struct MarkdownShortcutToolbar: View {
                 } label: {
                     MarkdownCommandLabel(command: command)
                         .frame(width: 26, height: 24)
+                        .background(
+                            editorInteractionState.activeInlineCommands.contains(command) ? Color.white.opacity(0.18) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                        .overlay(alignment: .bottom) {
+                            if editorInteractionState.mixedInlineCommands.contains(command) {
+                                Capsule().fill(Color.secondary).frame(width: 10, height: 2)
+                            }
+                        }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(MarkdownToolbarButtonStyle())
                 .help(command.help)
+                .accessibilityValue(editorInteractionState.mixedInlineCommands.contains(command) ? "Mixed"
+                    : (editorInteractionState.activeInlineCommands.contains(command) ? "On" : "Off"))
             }
 
             Spacer(minLength: 0)
@@ -817,6 +828,7 @@ struct MarkdownNoteEditor: View {
         let services = MarkdownEditorServices(images: imageStore)
 
         return MarkdownEditorConfiguration(
+            inlineEditingMode: .formatted,
             theme: theme,
             services: services,
             lists: ListStyle(indentPerLevel: 18, extraLineHeight: 1),

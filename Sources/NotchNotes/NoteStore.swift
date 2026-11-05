@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import MarkdownEngine
 
 struct NoteTab: Identifiable, Codable, Equatable {
     var id: UUID
@@ -178,7 +179,7 @@ final class NoteStore: ObservableObject {
             title.removeFirst(prefix.count)
         }
 
-        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        title = MarkdownFormatting.visibleText(in: title).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return "Untitled \(index + 1)" }
         return title.count > 42 ? String(title.prefix(41)) + "…" : title
     }

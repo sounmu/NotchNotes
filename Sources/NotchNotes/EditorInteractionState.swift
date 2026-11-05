@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
+import MarkdownEngine
 
-enum MarkdownCommand: CaseIterable, Identifiable {
+enum MarkdownCommand: CaseIterable, Identifiable, Hashable {
     case bold
     case italic
     case strikethrough
@@ -44,6 +45,8 @@ enum MarkdownCommand: CaseIterable, Identifiable {
 @MainActor
 final class EditorInteractionState: ObservableObject {
     @Published private(set) var isDraggingSelection = false
+    @Published private(set) var activeInlineCommands: Set<MarkdownCommand> = []
+    @Published private(set) var mixedInlineCommands: Set<MarkdownCommand> = []
     var onSelectionChange: ((NSRange) -> Void)?
 
     private weak var textView: NSTextView?
@@ -61,6 +64,7 @@ final class EditorInteractionState: ObservableObject {
             self.textView = textView
             observeSelectionChanges(in: textView)
             applyPendingSelectionRestore()
+            refreshFormattingState()
         }
 
         if pendingFocus {
@@ -121,15 +125,41 @@ final class EditorInteractionState: ObservableObject {
 
         focusEditor()
 
+        let inlineStyle: MarkdownFormatting.InlineStyle?
+        switch command {
+        case .bold: inlineStyle = .bold
+        case .italic: inlineStyle = .italic
+        case .strikethrough: inlineStyle = .strikethrough
+        case .inlineCode: inlineStyle = .code
+        default: inlineStyle = nil
+        }
+        if let inlineStyle, MarkdownFormatting.apply(inlineStyle, in: textView) {
+            refreshFormattingState()
+            requestLayoutRefresh()
+            return
+        }
+        let blockStyle: MarkdownFormatting.BlockStyle?
+        switch command {
+        case .quote: blockStyle = .quote
+        case .unorderedList: blockStyle = .unorderedList
+        case .orderedList: blockStyle = .orderedList
+        case .todoList: blockStyle = .taskList
+        default: blockStyle = nil
+        }
+        if let blockStyle, MarkdownFormatting.applyBlock(blockStyle, in: textView) {
+            requestLayoutRefresh()
+            return
+        }
+
         switch command {
         case .bold:
-            wrapSelection(prefix: "**", suffix: "**", placeholder: "bold", in: textView)
+            applyInlineFormatting(.bold, marker: "**", placeholder: "bold", in: textView)
         case .italic:
-            wrapSelection(prefix: "*", suffix: "*", placeholder: "italic", in: textView)
+            applyInlineFormatting(.italic, marker: "*", placeholder: "italic", in: textView)
         case .strikethrough:
-            wrapSelection(prefix: "~~", suffix: "~~", placeholder: "strikethrough", in: textView)
+            applyInlineFormatting(.strikethrough, marker: "~~", placeholder: "strikethrough", in: textView)
         case .inlineCode:
-            wrapSelection(prefix: "`", suffix: "`", placeholder: "code", in: textView)
+            applyInlineFormatting(.code, marker: "`", placeholder: "code", in: textView)
         case .link:
             applyLink(in: textView)
         case .quote:
@@ -197,15 +227,36 @@ final class EditorInteractionState: ObservableObject {
 
         observedSelectionTextView = textView
         selectionObserver = NotificationCenter.default.addObserver(
-            forName: NSTextView.didChangeSelectionNotification,
+            forName: nil,
             object: textView,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard [NSTextView.didChangeSelectionNotification, NSText.didChangeNotification,
+                   MarkdownFormatting.didChangeNotification].contains(notification.name) else { return }
             Task { @MainActor in
                 guard let self, let range = self.currentSelectionRange() else { return }
+                self.refreshFormattingState()
                 self.onSelectionChange?(range)
             }
         }
+    }
+
+    private func refreshFormattingState() {
+        guard let textView else { return }
+        let styles: [(MarkdownCommand, MarkdownFormatting.InlineStyle)] = [
+            (.bold, .bold), (.italic, .italic), (.strikethrough, .strikethrough), (.inlineCode, .code)
+        ]
+        var active = Set<MarkdownCommand>(), mixed = Set<MarkdownCommand>()
+        let states = MarkdownFormatting.selectionStates(in: textView)
+        for (command, style) in styles {
+            switch states[style] ?? .off {
+            case .on: active.insert(command)
+            case .mixed: mixed.insert(command)
+            case .off: break
+            }
+        }
+        if activeInlineCommands != active { activeInlineCommands = active }
+        if mixedInlineCommands != mixed { mixedInlineCommands = mixed }
     }
 
     private func applyPendingSelectionRestore() {
@@ -219,6 +270,67 @@ final class EditorInteractionState: ObservableObject {
         let content = selectedText.isEmpty ? placeholder : selectedText
         let replacement = prefix + content + suffix
         let selection = NSRange(location: range.location + prefix.utf16.count, length: content.utf16.count)
+        replaceText(in: textView, range: range, with: replacement, selectionAfter: selection)
+    }
+
+    private func applyInlineFormatting(_ style: MarkdownFormatting.InlineStyle, marker: String,
+                                       placeholder: String, in textView: NSTextView) {
+        let range = safeSelectedRange(in: textView)
+        guard range.length > 0 else {
+            wrapSelection(prefix: marker, suffix: marker, placeholder: placeholder, in: textView)
+            return
+        }
+        let source = textView.string as NSString
+        let selected = source.substring(with: range)
+        guard MarkdownFormatting.canFormat(range, in: textView.string, style: style) else { return }
+        // The previous command leaves the content selected, excluding markers.
+        if let span = MarkdownFormatting.spans(in: textView.string, style: style).first(where: { $0.contentRange == range }) {
+            replaceText(in: textView, range: span.range,
+                         with: selected, selectionAfter: NSRange(location: span.range.location, length: range.length))
+            return
+        }
+
+        // A delimiter next to whitespace (or across a newline) is not a valid
+        // inline token. Wrap each nonempty line's content, keeping whitespace
+        // outside the delimiters and preserving blank lines verbatim.
+        let lines = selected.components(separatedBy: "\n")
+        let contents = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        func isWrapped(_ content: String) -> Bool {
+            MarkdownFormatting.spans(in: content, style: style)
+                .contains { $0.range == NSRange(location: 0, length: content.utf16.count) }
+        }
+        let nonempty = contents.filter { !$0.isEmpty }
+        guard !nonempty.isEmpty else { return }
+        let removing = nonempty.allSatisfy(isWrapped)
+        let replacement = zip(lines, contents).map { line, content -> String in
+            guard !content.isEmpty else { return line }
+            let nsLine = line as NSString
+            let bodyRange = nsLine.range(of: content)
+            let body: String
+            if removing {
+                let span = MarkdownFormatting.spans(in: content, style: style).first { $0.range.length == content.utf16.count }!
+                body = (content as NSString).substring(with: span.contentRange)
+            } else {
+                let normalized = NSMutableString(string: content)
+                // Merge complete spans rather than nesting delimiters.
+                let markers = MarkdownFormatting.spans(in: content, style: style).flatMap(\.markerRanges)
+                for range in Set(markers).sorted(by: { $0.location > $1.location }) {
+                    normalized.deleteCharacters(in: range)
+                }
+                body = marker + (normalized as String) + marker
+            }
+            return nsLine.replacingCharacters(in: bodyRange, with: body)
+        }.joined(separator: "\n")
+        let selection: NSRange
+        if lines.count == 1 {
+            let content = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+            let bodyRange = (replacement as NSString).range(of: content)
+            let markerLength = isWrapped(content) ? marker.utf16.count : 0
+            selection = NSRange(location: range.location + bodyRange.location + markerLength,
+                                length: bodyRange.length - markerLength * 2)
+        } else {
+            selection = NSRange(location: range.location, length: replacement.utf16.count)
+        }
         replaceText(in: textView, range: range, with: replacement, selectionAfter: selection)
     }
 
@@ -267,10 +379,7 @@ final class EditorInteractionState: ObservableObject {
     }
 
     private func replaceText(in textView: NSTextView, range: NSRange, with replacement: String, selectionAfter: NSRange) {
-        guard textView.shouldChangeText(in: range, replacementString: replacement) else { return }
-        textView.textStorage?.replaceCharacters(in: range, with: replacement)
-        textView.didChangeText()
-        textView.setSelectedRange(selectionAfter)
+        MarkdownFormatting.replaceSource(in: textView, range: range, with: replacement, selectionAfter: selectionAfter)
     }
 
     private func safeSelectedRange(in textView: NSTextView) -> NSRange {

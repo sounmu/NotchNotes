@@ -119,6 +119,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(pasteItem)
 
         editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Bold", action: Selector(("applyMarkdownBold:")), keyEquivalent: "b"))
+        editMenu.addItem(NSMenuItem(title: "Italic", action: Selector(("applyMarkdownItalic:")), keyEquivalent: "i"))
+
+        editMenu.addItem(.separator())
 
         let selectAllItem = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         selectAllItem.target = nil
