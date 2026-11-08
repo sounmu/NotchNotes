@@ -1,0 +1,5 @@
+node_modules/
+Sources/EditorComparison/Web/
+results/
+apps/
+web-build-meta.json

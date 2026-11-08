@@ -1,0 +1,8 @@
+{
+  "name": "notchnotes-editor-comparison",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build-web.mjs" },
+  "dependencies": { "@milkdown/crepe": "7.23.0" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}
