@@ -47,6 +47,10 @@ final class EditorInteractionState: ObservableObject {
     @Published private(set) var isDraggingSelection = false
     @Published private(set) var activeInlineCommands: Set<MarkdownCommand> = []
     @Published private(set) var mixedInlineCommands: Set<MarkdownCommand> = []
+    @Published var editorError: String?
+    @Published var editorNotice: String?
+    private(set) var crepeEditor: CrepeEditorController?
+    private(set) var nativeEditor: NativeNoteEditorController?
     var onSelectionChange: ((NSRange) -> Void)?
 
     private weak var textView: NSTextView?
@@ -58,6 +62,30 @@ final class EditorInteractionState: ObservableObject {
     private var focusAttemptsRemaining = 0
     private var layoutRefreshGeneration = 0
     private var selectionRestoreGeneration = 0
+
+    func bind(webEditor: CrepeEditorController) {
+        crepeEditor = webEditor
+        textView = nil
+        if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver); self.selectionObserver = nil }
+        if pendingFocus { focusEditor() }
+    }
+
+    func bind(nativeEditor: NativeNoteEditorController) {
+        self.nativeEditor = nativeEditor
+        textView = nil
+        if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver); self.selectionObserver = nil }
+        if pendingFocus { focusEditor() }
+    }
+
+    func setFormattingState(active: [String], mixed: [String]) {
+        activeInlineCommands = Set(MarkdownCommand.allCases.filter { active.contains($0.id) })
+        mixedInlineCommands = Set(MarkdownCommand.allCases.filter { mixed.contains($0.id) })
+    }
+
+    func flushEditor() async {
+        if let nativeEditor { nativeEditor.flush() }
+        else { await crepeEditor?.flush() }
+    }
 
     func bind(containerView: NSView?, textView: NSTextView?) {
         if let textView {
@@ -73,6 +101,8 @@ final class EditorInteractionState: ObservableObject {
     }
 
     func requestFocus(searchingIn rootView: NSView?) {
+        if nativeEditor != nil { focusEditor(); return }
+        if crepeEditor != nil { focusEditor(); return }
         refreshTextView(searchingIn: rootView)
         pendingFocus = true
         focusAttemptsRemaining = 8
@@ -89,6 +119,7 @@ final class EditorInteractionState: ObservableObject {
         searchingIn rootView: NSView? = nil,
         reveal: Bool = true
     ) {
+        if crepeEditor != nil || nativeEditor != nil { return } // Engines restore their own document positions.
         pendingSelectionRange = range
         if let rootView {
             refreshTextView(searchingIn: rootView)
@@ -106,6 +137,8 @@ final class EditorInteractionState: ObservableObject {
     }
 
     func requestLayoutRefresh(searchingIn rootView: NSView? = nil, resetScroll: Bool = false) {
+        if let nativeEditor { nativeEditor.container.needsLayout = true; return }
+        if let crepeEditor { crepeEditor.webView.needsLayout = true; return }
         if let rootView {
             refreshTextView(searchingIn: rootView)
         }
@@ -121,6 +154,8 @@ final class EditorInteractionState: ObservableObject {
     }
 
     func applyMarkdownCommand(_ command: MarkdownCommand) {
+        if let nativeEditor { nativeEditor.command(command.id); return }
+        if let crepeEditor { crepeEditor.command(command.id); return }
         guard let textView else { return }
 
         focusEditor()
@@ -151,6 +186,11 @@ final class EditorInteractionState: ObservableObject {
             return
         }
 
+        applySourceMarkdownCommand(command, in: textView)
+        requestLayoutRefresh()
+    }
+
+    func applySourceMarkdownCommand(_ command: MarkdownCommand, in textView: NSTextView) {
         switch command {
         case .bold:
             applyInlineFormatting(.bold, marker: "**", placeholder: "bold", in: textView)
@@ -172,7 +212,6 @@ final class EditorInteractionState: ObservableObject {
             prefixSelectedLines(with: "- [ ] ", in: textView)
         }
 
-        requestLayoutRefresh()
     }
 
     func handleMouseEvent(_ event: NSEvent, searchingIn rootView: NSView?) {
@@ -207,6 +246,20 @@ final class EditorInteractionState: ObservableObject {
     }
 
     private func focusEditor() {
+        if let nativeEditor {
+            pendingFocus = false
+            NSApp.activate(ignoringOtherApps: true)
+            nativeEditor.container.window?.makeKeyAndOrderFront(nil)
+            nativeEditor.focus()
+            return
+        }
+        if let crepeEditor {
+            pendingFocus = false
+            NSApp.activate(ignoringOtherApps: true)
+            crepeEditor.webView.window?.makeKeyAndOrderFront(nil)
+            crepeEditor.focus()
+            return
+        }
         guard let textView else {
             return
         }
@@ -515,6 +568,7 @@ final class EditorInteractionState: ObservableObject {
     }
 
     private func refreshTextView(searchingIn rootView: NSView?) {
+        guard crepeEditor == nil, nativeEditor == nil else { return }
         guard let rootView,
               let freshTextView = rootView.firstDescendant(ofType: NSTextView.self) else {
             return
@@ -529,6 +583,12 @@ final class EditorInteractionState: ObservableObject {
     }
 
     private func contains(_ event: NSEvent) -> Bool {
+        if let view = nativeEditor?.container, event.window === view.window {
+            return view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+        }
+        if let view = crepeEditor?.webView, event.window === view.window {
+            return view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+        }
         guard let textView,
               let window = textView.window,
               event.window === window else {

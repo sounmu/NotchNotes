@@ -31,6 +31,8 @@ NotchNotes 是一款原生 macOS 刘海笔记应用。将鼠标移到或点击�
 
 ## 本地运行
 
+开发构建需要 Swift 6.2+（Xcode 26.2+），应用运行仍支持 macOS 14+。
+
 ```bash
 swift run NotchNotes
 ```
@@ -66,4 +68,6 @@ NOTARY_PROFILE="notary-profile" \
 - Swift + AppKit：浮层、窗口层级、屏幕定位和顶部触发行为。
 - SwiftUI：笔记和文件暂存界面。
 - UserDefaults：轻量本地数据存储。
-- MarkdownEngine：Markdown 编辑和内嵌图片。
+- [NativeMarkdownKit](Packages/NativeMarkdownKit/README.md)：macOS 原生 Markdown 文档模型与连续 AppKit 编辑器；沿用原有 NotchNotes 界面。
+- 暂未支持富文本渲染的语法（例如图片、表格和本地引用）以原生 Markdown 源码模式编辑，保留原文。
+- [WebEditor](WebEditor/README.md)：保留 Crepe 对照实现及测试；默认笔记界面使用原生引擎。

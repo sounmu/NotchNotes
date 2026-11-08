@@ -17,6 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController?.flush()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            await panelController?.flushEditor()
+            panelController?.flush()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = item.button else { return }
@@ -95,13 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeEditMenu() -> NSMenu {
         let editMenu = NSMenu(title: "Edit")
 
-        let undoItem = NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        undoItem.target = nil
+        let undoItem = NSMenuItem(title: "Undo", action: #selector(undoEditor), keyEquivalent: "z")
+        undoItem.target = self
         editMenu.addItem(undoItem)
 
-        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        let redoItem = NSMenuItem(title: "Redo", action: #selector(redoEditor), keyEquivalent: "Z")
         redoItem.keyEquivalentModifierMask = [.command, .shift]
-        redoItem.target = nil
+        redoItem.target = self
         editMenu.addItem(redoItem)
 
         editMenu.addItem(.separator())
@@ -119,8 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(pasteItem)
 
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Bold", action: Selector(("applyMarkdownBold:")), keyEquivalent: "b"))
-        editMenu.addItem(NSMenuItem(title: "Italic", action: Selector(("applyMarkdownItalic:")), keyEquivalent: "i"))
+        let bold = NSMenuItem(title: "Bold", action: #selector(boldEditor), keyEquivalent: "b")
+        bold.target = self; editMenu.addItem(bold)
+        let italic = NSMenuItem(title: "Italic", action: #selector(italicEditor), keyEquivalent: "i")
+        italic.target = self; editMenu.addItem(italic)
 
         editMenu.addItem(.separator())
 
@@ -162,11 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) -> NSMenuItem {
         let item = NSMenuItem(
             title: title,
-            action: #selector(NSTextView.performFindPanelAction(_:)),
+            action: #selector(findEditor(_:)),
             keyEquivalent: keyEquivalent
         )
         item.tag = action.rawValue
-        item.target = nil
+        item.target = self
         return item
     }
 
@@ -189,6 +200,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func newNote() {
         panelController?.createNote()
     }
+
+    @objc private func undoEditor() {
+        if panelController?.editorCommand("undo") != true { NSApp.sendAction(Selector(("undo:")), to: nil, from: self) }
+    }
+    @objc private func redoEditor() {
+        if panelController?.editorCommand("redo") != true { NSApp.sendAction(Selector(("redo:")), to: nil, from: self) }
+    }
+    @objc private func boldEditor() { panelController?.editorCommand("bold") }
+    @objc private func italicEditor() { panelController?.editorCommand("italic") }
+    @objc private func findEditor(_ sender: NSMenuItem) { panelController?.findInEditor(sender.tag) }
 
     @objc private func showNotes() {
         panelController?.expand(animated: true)

@@ -4,7 +4,10 @@ import SwiftUI
 
 @MainActor
 final class DrawerState: ObservableObject {
-    @Published var isExpanded = false
+    @Published var isExpanded = false {
+        didSet { if isExpanded { hasOpened = true } }
+    }
+    @Published private(set) var hasOpened = false
     @Published var revealProgress: CGFloat = 0
 }
 
@@ -80,6 +83,7 @@ struct NotebookView: View {
                         settingsStore: settingsStore,
                         imageStore: imageStore,
                         editorInteractionState: editorInteractionState,
+                        isEditorActivated: drawerState.hasOpened,
                         size: noteEditorSize
                     )
                     .frame(width: noteEditorSize.width, height: noteEditorSize.height)
@@ -479,6 +483,7 @@ struct MarkdownEditorPanel: View {
     @ObservedObject var settingsStore: AppSettingsStore
     let imageStore: LocalImageStore
     let editorInteractionState: EditorInteractionState
+    let isEditorActivated: Bool
     let size: CGSize
 
     private let toolbarHeight: CGFloat = 38
@@ -486,11 +491,11 @@ struct MarkdownEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkdownNoteEditor(
-                store: store,
-                imageStore: imageStore,
-                editorInteractionState: editorInteractionState
-            )
+            Group {
+                if isEditorActivated {
+                    MarkdownNoteEditor(store: store, imageStore: imageStore, editorInteractionState: editorInteractionState)
+                } else { Color.clear }
+            }
             .frame(width: size.width, height: editorHeight)
 
             Rectangle()
@@ -663,6 +668,7 @@ struct TabPagerControl: View {
     }
 
     private func rememberCurrentSelection() {
+        editorInteractionState.nativeEditor?.editor?.commitComposition()
         guard let range = editorInteractionState.currentSelectionRange() else { return }
         store.updateSelection(for: store.activeTabID, range: range)
     }
@@ -770,74 +776,23 @@ struct CompactNotchView: View {
 struct MarkdownNoteEditor: View {
     @ObservedObject var store: NoteStore
     let imageStore: LocalImageStore
-    let editorInteractionState: EditorInteractionState
-    @State private var isWikiLinkActive = false
-    @State private var pendingInlineReplacement: InlineReplacementRequest?
+    @ObservedObject var editorInteractionState: EditorInteractionState
 
     var body: some View {
-        let tabID = store.activeTabID
-        return ZStack(alignment: .topLeading) {
-            NativeTextViewWrapper(
-                text: Binding(
-                    get: { store.text(for: tabID) },
-                    set: { store.updateText($0, for: tabID) }
-                ),
-                isWikiLinkActive: $isWikiLinkActive,
-                pendingInlineReplacement: $pendingInlineReplacement,
-                configuration: configuration,
-                fontName: "SF Pro",
-                fontSize: 15,
-                documentId: store.activeTabID.uuidString,
-                isEditable: true,
-                onPasteImage: savePastedImage
-            )
-            .background {
-                EditorFocusBinder(state: editorInteractionState)
+        ZStack(alignment: .topLeading) {
+            NativeNoteEditorView(store: store, interaction: editorInteractionState)
+            if let notice = editorInteractionState.editorNotice {
+                VStack {
+                    Spacer()
+                    Text(notice).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
+                        .padding(5).background(.black.opacity(0.8))
+                }
+                .allowsHitTesting(false)
             }
-
-            if store.text.isEmpty {
-                Text("Start typing…")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.24))
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 12)
-                    .allowsHitTesting(false)
+            if let message = editorInteractionState.editorError {
+                Text(message).font(.caption).foregroundStyle(.red).padding(12)
             }
         }
-    }
-
-    private func savePastedImage(_ pasteboard: NSPasteboard) -> String? {
-        imageStore.saveImage(from: pasteboard)
-    }
-
-    private var configuration: MarkdownEditorConfiguration {
-        let theme = MarkdownEditorTheme(
-            bodyText: NSColor(white: 0.92, alpha: 1),
-            mutedText: NSColor(white: 0.58, alpha: 1),
-            disabledText: NSColor(white: 0.38, alpha: 1),
-            headingMarker: NSColor(white: 0.44, alpha: 1),
-            link: NSColor.systemBlue,
-            incompleteLink: NSColor.systemBlue.withAlphaComponent(0.75),
-            findMatchHighlight: NSColor.systemYellow.withAlphaComponent(0.55),
-            findCurrentMatchHighlight: NSColor.systemYellow,
-            latexLightModeText: .white,
-            latexDarkModeText: .white,
-            strikethroughColor: NSColor(white: 0.62, alpha: 1)
-        )
-
-        let services = MarkdownEditorServices(images: imageStore)
-
-        return MarkdownEditorConfiguration(
-            inlineEditingMode: .formatted,
-            theme: theme,
-            services: services,
-            lists: ListStyle(indentPerLevel: 18, extraLineHeight: 1),
-            imageEmbed: ImageEmbedStyle(fallbackMaxWidth: 440, paragraphSpacing: 6, imageGap: 6),
-            overscroll: OverscrollPolicy(percent: 0, maxPoints: 0, minPoints: 0),
-            dragSelection: DragSelectionPolicy(movementThreshold: 8, edgeTriggerDistance: 8, scrollStepPerTick: 4, ticksPerSecond: 30),
-            scrollers: .vertical,
-            textInsets: TextInsets(horizontal: 12, vertical: 12)
-        )
     }
 }
 

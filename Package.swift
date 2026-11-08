@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 
 import PackageDescription
 
@@ -12,16 +12,19 @@ let package = Package(
         .executable(name: "NotchNotesSleepHelper", targets: ["NotchNotesSleepHelper"])
     ],
     dependencies: [
-        .package(path: "Vendor/swift-markdown-engine")
+        .package(path: "Vendor/swift-markdown-engine"),
+        .package(path: "Packages/NativeMarkdownKit")
     ],
     targets: [
         .executableTarget(
             name: "NotchNotes",
             dependencies: [
                 "SleepGuardCore",
+                .product(name: "NativeMarkdownAppKit", package: "NativeMarkdownKit"),
                 .product(name: "MarkdownEngine", package: "swift-markdown-engine")
             ],
-            path: "Sources/NotchNotes"
+            path: "Sources/NotchNotes",
+            resources: [.copy("Resources/Crepe")]
         ),
         .target(name: "SleepGuardCore"),
         .executableTarget(name: "NotchNotesSleepHelper", dependencies: ["SleepGuardCore"]),

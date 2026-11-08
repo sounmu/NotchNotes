@@ -285,6 +285,7 @@ final class NotchPanelController: NSObject {
             store.updateSelection(for: store.activeTabID, range: range)
         }
         store.flush(waitForDisk: false)
+        Task { await editorInteractionState.flushEditor() }
         if returnFocus, NSApp.isActive {
             returnFocusToPreviousApp()
         }
@@ -805,6 +806,25 @@ final class NotchPanelController: NSObject {
     func flush() {
         settingsStore.stopKeepingAwake()
         store.flush(waitForDisk: true)
+    }
+
+    func flushEditor() async { await editorInteractionState.flushEditor() }
+    @discardableResult
+    func editorCommand(_ command: String) -> Bool {
+        if let editor = editorInteractionState.nativeEditor,
+           NSApp.keyWindow?.firstResponder === editor.editor?.textView {
+            editor.command(command)
+            return true
+        }
+        guard let editor = editorInteractionState.crepeEditor,
+              let responder = NSApp.keyWindow?.firstResponder as? NSView,
+              responder === editor.webView || responder.isDescendant(of: editor.webView) else { return false }
+        editor.command(command)
+        return true
+    }
+    func findInEditor(_ action: Int) {
+        if let native = editorInteractionState.nativeEditor { native.find(action: action) }
+        else { editorInteractionState.crepeEditor?.find(action: action) }
     }
 
     private func activateEditor() {

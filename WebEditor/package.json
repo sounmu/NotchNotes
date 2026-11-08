@@ -1,0 +1,15 @@
+{
+  "name": "notchnotes-crepe-editor",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs", "test": "node --test test/*.test.js" },
+  "dependencies": {
+    "@milkdown/crepe": "7.23.0",
+    "@milkdown/kit": "7.23.0",
+    "unified": "11.0.5",
+    "remark-parse": "11.0.0",
+    "remark-gfm": "4.0.1",
+    "unist-util-visit": "5.0.0"
+  },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

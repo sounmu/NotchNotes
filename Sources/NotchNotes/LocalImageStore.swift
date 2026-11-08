@@ -19,10 +19,10 @@ final class LocalImageStore: EmbeddedImageFileProvider, @unchecked Sendable {
     private var version = 0
     private let imageExtension = "png"
 
-    init() {
+    init(directory: URL? = nil) {
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        directoryURL = supportURL.appendingPathComponent("NotchNotes/Images", isDirectory: true)
+        directoryURL = directory ?? supportURL.appendingPathComponent("NotchNotes/Images", isDirectory: true)
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         manifestURL = directoryURL.appendingPathComponent("manifest.json")
         records = Self.loadRecords(from: manifestURL)
@@ -50,6 +50,19 @@ final class LocalImageStore: EmbeddedImageFileProvider, @unchecked Sendable {
             originalFileURL: nil,
             sourceKind: "clipboardImage"
         )
+    }
+
+    func saveImage(data: Data, name: String) -> String? {
+        guard let png = pngData(fromImageData: data) else { return nil }
+        return save(data: png, originalName: name, originalFileURL: nil, sourceKind: "editorUpload")
+    }
+
+    func editorImageData(reference: String) -> Data? {
+        let parts = reference.components(separatedBy: "|")
+        guard !parts.contains(where: { $0.contains("/") || $0.contains("\\") || $0 == ".." }) else { return nil }
+        let request = EmbeddedImageRequest(name: parts[0], id: parts.count > 1 ? parts[1] : nil)
+        guard let url = storedFileURL(for: request) else { return nil }
+        return try? Data(contentsOf: url)
     }
 
     func image(for reference: EmbeddedImageRequest) -> NSImage? {

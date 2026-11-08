@@ -1,0 +1,11 @@
+html, body { margin: 0; background: transparent; color: #ebebeb; color-scheme: dark; }
+.milkdown { --crepe-color-background: transparent; --crepe-color-on-background: #ebebeb;
+  --crepe-font-default: -apple-system, BlinkMacSystemFont, sans-serif;
+  --crepe-font-title: -apple-system, BlinkMacSystemFont, sans-serif; --crepe-font-code: Menlo, monospace; }
+.milkdown .ProseMirror { padding: 12px 16px; font-size: 15px; line-height: 1.5; min-height: calc(100vh - 24px); }
+.milkdown .ProseMirror h1 { font-size: 1.65em; }
+.milkdown .ProseMirror h2 { font-size: 1.4em; }
+.milkdown .ProseMirror h3 { font-size: 1.2em; }
+.milkdown .ProseMirror p { margin: 0 0 8px; }
+.milkdown .ProseMirror li p { margin-bottom: 2px; }
+.milkdown .ProseMirror img { max-width: 100%; }

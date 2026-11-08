@@ -8,6 +8,8 @@ struct NoteTab: Identifiable, Codable, Equatable {
     var createdAt: Date
     var selectionLocation: Int?
     var selectionLength: Int?
+    var crepeSelection: CrepeSelection?
+    var nativeSelection: NativeEditorSelection?
 
     init(id: UUID = UUID(), text: String = "", createdAt: Date = Date()) {
         self.id = id
@@ -165,6 +167,24 @@ final class NoteStore: ObservableObject {
             NSRange(location: tab.selectionLocation ?? 0, length: tab.selectionLength ?? 0),
             text: tab.text
         )
+    }
+
+    func updateCrepeSelection(_ selection: CrepeSelection, for id: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }), tabs[index].crepeSelection != selection else { return }
+        tabs[index].crepeSelection = selection
+        scheduleSave()
+    }
+
+    func crepeSelection(for id: UUID) -> CrepeSelection? {
+        tabs.first(where: { $0.id == id })?.crepeSelection
+    }
+
+    func updateNativeSelection(_ range: NSRange, for id: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let selection = NativeEditorSelection(location: range.location, length: range.length)
+        guard tabs[index].nativeSelection != selection else { return }
+        tabs[index].nativeSelection = selection
+        scheduleSave()
     }
 
     func title(for id: UUID) -> String {

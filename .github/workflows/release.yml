@@ -17,18 +17,21 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: 使用 Swift 6
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: 使用 Swift 6.2
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
 
       - name: 运行测试
         run: swift test
+
+      - name: 测试原生编辑器
+        run: swift test --package-path Packages/NativeMarkdownKit
 
       - name: 构建通用发布包
         run: |
