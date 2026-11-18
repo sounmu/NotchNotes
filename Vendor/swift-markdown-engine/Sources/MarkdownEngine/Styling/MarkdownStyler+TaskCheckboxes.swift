@@ -26,12 +26,6 @@ extension MarkdownStyler {
             let checkboxText = ctx.nsText.substring(with: checkboxRange)
             let isChecked = checkboxText.range(of: "[x]", options: [.caseInsensitive]) != nil
             if markerRange.location != NSNotFound {
-                let isActiveSyntax = MarkdownLists.taskCheckboxSyntaxIsActive(
-                    markerRange: markerRange,
-                    checkboxRange: checkboxRange,
-                    nsText: ctx.nsText,
-                    caretLocation: ctx.caretLocation
-                )
                 if isChecked {
                     let lineRange = ctx.nsText.lineRange(for: checkboxRange)
                     var lineEnd = lineRange.location + lineRange.length
@@ -60,7 +54,6 @@ extension MarkdownStyler {
                         ]))
                     }
                 }
-                if isActiveSyntax { continue }
                 let afterCheckboxIndex = checkboxRange.location + checkboxRange.length
                 if afterCheckboxIndex < ctx.nsText.length {
                     let spaceRange = NSRange(location: afterCheckboxIndex, length: 1)

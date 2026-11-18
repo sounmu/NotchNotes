@@ -25,6 +25,13 @@ public enum InlineEditingMode: Sendable {
 
 // MARK: - Top-level Configuration
 
+/// Language selector used by built-in UI strings inside `MarkdownEngine`
+/// (such as right-click context menu items).
+public enum MarkdownEditorLocale: String, Sendable, Equatable {
+    case english = "en"
+    case chinese = "zh-Hans"
+}
+
 /// All tunable values for the Markdown editor engine grouped by concern.
 ///
 /// The struct is deliberately flat-with-nested-groups: top level holds
@@ -37,6 +44,7 @@ public struct MarkdownEditorConfiguration: Sendable {
 
     public var theme: MarkdownEditorTheme
     public var services: MarkdownEditorServices
+    public var locale: MarkdownEditorLocale
     public var markers: MarkerStyle
     public var codeBlock: CodeBlockStyle
     public var inlineCode: InlineCodeStyle
@@ -58,6 +66,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         inlineEditingMode: InlineEditingMode = .livePreview,
         theme: MarkdownEditorTheme = .default,
         services: MarkdownEditorServices = .default,
+        locale: MarkdownEditorLocale = .english,
         markers: MarkerStyle = .default,
         codeBlock: CodeBlockStyle = .default,
         inlineCode: InlineCodeStyle = .default,
@@ -78,6 +87,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         self.inlineEditingMode = inlineEditingMode
         self.theme = theme
         self.services = services
+        self.locale = locale
         self.markers = markers
         self.codeBlock = codeBlock
         self.inlineCode = inlineCode
@@ -233,7 +243,7 @@ public struct ListStyle: Sendable {
 
     public init(
         helpersEnabled: Bool = true,
-        autoClosePairsEnabled: Bool = true,
+        autoClosePairsEnabled: Bool = false,
         indentPerLevel: CGFloat = 27.5,
         maximumNestingLevel: Int = 3,
         extraLineHeight: CGFloat = 2

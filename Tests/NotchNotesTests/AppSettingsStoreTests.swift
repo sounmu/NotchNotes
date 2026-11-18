@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import NotchNotes
@@ -105,7 +106,7 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
     }
 
-    func testExternalDisabledSleepIsNotAdoptedOrMigratedAfterFailedStart() async {
+    func testExternalKeepAwakeDoesNotStartHelperOrClaimOwnership() {
         let defaults = makeDefaults()
         let sleepGuard = FakeSystemSleepGuard()
         sleepGuard.resetResult = false
@@ -114,9 +115,102 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(sleepGuard.resetCallCount, 0)
         XCTAssertFalse(store.isKeepingAwake)
         store.toggleKeepAwake()
-        await waitUntil { !store.isChangingKeepAwake }
+        XCTAssertTrue(store.isKeepingAwake)
+        XCTAssertTrue(store.isUsingExternalKeepAwake)
+        XCTAssertFalse(store.isChangingKeepAwake)
+        XCTAssertNil(store.keepAwakeErrorMessage)
+        XCTAssertEqual(sleepGuard.startCallCount, 0)
+        XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
+
+        store.toggleKeepAwake()
+        store.stopKeepingAwake() // Quitting after toggling off must also be inert.
+        XCTAssertEqual(sleepGuard.resetCallCount, 0)
         XCTAssertFalse(sleepGuard.recoveredLegacyState)
         XCTAssertFalse(store.isKeepingAwake)
+        XCTAssertFalse(store.isUsingExternalKeepAwake)
+        XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
+    }
+
+    func testExternalKeepAwakeEndsWhenOtherAppRestoresSleep() async {
+        let sleepGuard = FakeSystemSleepGuard()
+        var sleepDisabled = true
+        let store = AppSettingsStore(
+            defaults: makeDefaults(), systemSleepGuard: sleepGuard,
+            sleepDisabledState: { sleepDisabled }
+        )
+        store.toggleKeepAwake()
+        store.refreshExternalKeepAwakeState()
+        XCTAssertTrue(store.isUsingExternalKeepAwake)
+
+        sleepDisabled = false
+        store.refreshExternalKeepAwakeState()
+        XCTAssertFalse(store.isKeepingAwake)
+        XCTAssertFalse(store.isUsingExternalKeepAwake)
+        XCTAssertEqual(sleepGuard.resetCallCount, 0)
+
+        store.toggleKeepAwake()
+        XCTAssertEqual(sleepGuard.startCallCount, 1)
+        store.stopKeepingAwake()
+        await waitUntil { !store.isChangingKeepAwake }
+    }
+
+    func testQuittingAndRelaunchingExternalSessionDoesNotRestoreSleep() {
+        let defaults = makeDefaults()
+        let sleepGuard = FakeSystemSleepGuard()
+        let store = AppSettingsStore(defaults: defaults, systemSleepGuard: sleepGuard, sleepDisabledState: { true })
+        store.toggleKeepAwake()
+        store.stopKeepingAwake()
+        XCTAssertEqual(sleepGuard.resetCallCount, 0)
+
+        let restored = AppSettingsStore(defaults: defaults, systemSleepGuard: sleepGuard, sleepDisabledState: { true })
+        restored.recoverSleepAfterLaunchIfNeeded()
+        XCTAssertEqual(sleepGuard.resetCallCount, 0)
+        XCTAssertFalse(restored.isKeepingAwake)
+        XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
+    }
+
+    func testExternalKeepAwakeEnabledDuringStartupIsJoinedAfterCleanup() async {
+        let sleepGuard = FakeSystemSleepGuard()
+        sleepGuard.shouldSuspendReadiness = true
+        var sleepDisabled = false
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(
+            defaults: defaults, systemSleepGuard: sleepGuard,
+            sleepDisabledState: { sleepDisabled }
+        )
+        store.toggleKeepAwake()
+        await waitUntil { sleepGuard.isWaitingForReadiness }
+        sleepDisabled = true
+        sleepGuard.resolveReadiness(.failure(SystemSleepGuardError.helperLaunchFailed("Sleep already disabled")))
+        await waitUntil { !store.isChangingKeepAwake }
+        XCTAssertTrue(store.isUsingExternalKeepAwake)
+        XCTAssertTrue(store.isKeepingAwake)
+        XCTAssertNil(store.keepAwakeErrorMessage)
+        XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
+        XCTAssertEqual(sleepGuard.resetCallCount, 1)
+        store.stopKeepingAwake()
+        XCTAssertEqual(sleepGuard.resetCallCount, 1)
+    }
+
+    func testExternalKeepAwakeDuringStartupIsNotJoinedWhenCleanupFails() async {
+        let sleepGuard = FakeSystemSleepGuard()
+        sleepGuard.shouldSuspendReadiness = true
+        sleepGuard.resetResult = false
+        var sleepDisabled = false
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(
+            defaults: defaults,
+            systemSleepGuard: sleepGuard,
+            sleepDisabledState: { sleepDisabled }
+        )
+        store.toggleKeepAwake()
+        await waitUntil { sleepGuard.isWaitingForReadiness }
+        sleepDisabled = true
+        sleepGuard.resolveReadiness(.failure(SystemSleepGuardError.stateVerificationFailed))
+        await waitUntil { !store.isChangingKeepAwake }
+        XCTAssertFalse(store.isUsingExternalKeepAwake)
+        XCTAssertFalse(store.isKeepingAwake)
+        XCTAssertNotNil(store.keepAwakeErrorMessage)
         XCTAssertFalse(defaults.bool(forKey: "notchNotes.ownsSleepDisabled"))
     }
 
@@ -224,10 +318,160 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.isKeepingAwake)
     }
 
+    func testLaunchAtLoginTogglesOnAndOffWithoutRegisteringOnInit() {
+        let controller = FakeLaunchAtLoginController(status: .notRegistered)
+        let store = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+
+        XCTAssertTrue(store.canConfigureLaunchAtLogin)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertEqual(controller.registerCallCount, 0)
+        XCTAssertEqual(controller.unregisterCallCount, 0)
+
+        store.toggleLaunchAtLogin()
+        XCTAssertEqual(controller.registerCallCount, 1)
+        XCTAssertTrue(store.isLaunchAtLoginEnabled)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+
+        store.toggleLaunchAtLogin()
+        XCTAssertEqual(controller.unregisterCallCount, 1)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+
+        controller.status = .enabled
+        let restored = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+        XCTAssertTrue(restored.isLaunchAtLoginEnabled)
+        XCTAssertEqual(controller.registerCallCount, 1)
+    }
+
+    func testUnpackagedEnvironmentBlocksLaunchAtLoginWithoutCallingRegister() {
+        let controller = FakeLaunchAtLoginController(canConfigure: false, status: .notRegistered)
+        let store = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+
+        XCTAssertFalse(store.canConfigureLaunchAtLogin)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+
+        store.setLaunchAtLoginEnabled(true)
+        XCTAssertEqual(controller.registerCallCount, 0)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertEqual(
+            store.launchAtLoginErrorMessage,
+            LaunchAtLoginError.notPackaged.userMessage
+        )
+
+        store.dismissLaunchAtLoginError()
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+
+        store.setLaunchAtLoginEnabled(false)
+        XCTAssertEqual(controller.unregisterCallCount, 0)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+    }
+
+    func testLaunchAtLoginRequiresApprovalSurfacesSettingsAction() {
+        let controller = FakeLaunchAtLoginController(status: .notRegistered)
+        controller.registerError = .approvalRequired
+        let store = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+
+        store.setLaunchAtLoginEnabled(true)
+        XCTAssertEqual(controller.registerCallCount, 1)
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertTrue(store.launchAtLoginNeedsApproval)
+        XCTAssertEqual(
+            store.launchAtLoginErrorMessage,
+            LaunchAtLoginError.approvalRequired.userMessage
+        )
+
+        store.openLaunchAtLoginApprovalSettings()
+        XCTAssertEqual(controller.openApprovalSettingsCallCount, 1)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+    }
+
+    func testRefreshLaunchAtLoginStateSyncsExternalChangesAndApplicationActivation() {
+        let controller = FakeLaunchAtLoginController(status: .notRegistered)
+        controller.registerError = .approvalRequired
+        let store = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+
+        store.setLaunchAtLoginEnabled(true)
+        XCTAssertTrue(store.launchAtLoginNeedsApproval)
+        XCTAssertNotNil(store.launchAtLoginErrorMessage)
+
+        controller.status = .enabled
+        store.refreshLaunchAtLoginState()
+        XCTAssertTrue(store.isLaunchAtLoginEnabled)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+
+        controller.status = .requiresApproval
+        NotificationCenter.default.post(
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        XCTAssertFalse(store.isLaunchAtLoginEnabled)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertNil(store.launchAtLoginErrorMessage)
+
+        controller.status = .enabled
+        NotificationCenter.default.post(
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        XCTAssertTrue(store.isLaunchAtLoginEnabled)
+    }
+
+    func testLaunchAtLoginUnregisterFailurePreservesEnabledStateAndReportsError() {
+        let controller = FakeLaunchAtLoginController(status: .enabled)
+        controller.unregisterError = .unregistrationFailed("Permission denied.")
+        let store = AppSettingsStore(
+            defaults: makeDefaults(),
+            sleepDisabledState: { false },
+            launchAtLoginController: controller
+        )
+
+        XCTAssertTrue(store.isLaunchAtLoginEnabled)
+
+        store.setLaunchAtLoginEnabled(false)
+        XCTAssertEqual(controller.unregisterCallCount, 1)
+        XCTAssertTrue(store.isLaunchAtLoginEnabled)
+        XCTAssertFalse(store.launchAtLoginNeedsApproval)
+        XCTAssertEqual(
+            store.launchAtLoginErrorMessage,
+            LaunchAtLoginError.unregistrationFailed("Permission denied.").userMessage
+        )
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "AppSettingsStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
+        addTeardownBlock {
+            UserDefaults.removeTestSuiteAndPlist(named: suiteName)
+        }
         return defaults
     }
 
@@ -288,5 +532,63 @@ private final class FakeSystemSleepGuard: SystemSleepGuardControlling {
         resetCallCount += 1
         isRunning = false
         return resetResult
+    }
+}
+
+@MainActor
+private final class FakeLaunchAtLoginController: LaunchAtLoginControlling {
+    var canConfigure: Bool
+    var status: LaunchAtLoginStatus
+    var registerError: LaunchAtLoginError?
+    var unregisterError: LaunchAtLoginError?
+    var statusAfterRegister: LaunchAtLoginStatus = .enabled
+    var statusAfterUnregister: LaunchAtLoginStatus = .notRegistered
+    private(set) var registerCallCount = 0
+    private(set) var unregisterCallCount = 0
+    private(set) var openApprovalSettingsCallCount = 0
+
+    init(
+        canConfigure: Bool = true,
+        status: LaunchAtLoginStatus = .notRegistered
+    ) {
+        self.canConfigure = canConfigure
+        self.status = status
+    }
+
+    func register() throws {
+        registerCallCount += 1
+        if let registerError {
+            if registerError == .approvalRequired {
+                status = .requiresApproval
+            }
+            throw registerError
+        }
+        status = statusAfterRegister
+    }
+
+    func unregister() throws {
+        unregisterCallCount += 1
+        if let unregisterError {
+            throw unregisterError
+        }
+        status = statusAfterUnregister
+    }
+
+    func openApprovalSettings() {
+        openApprovalSettingsCallCount += 1
+    }
+}
+
+extension UserDefaults {
+    static func removeTestSuiteAndPlist(named suiteName: String) {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        CFPreferencesAppSynchronize(suiteName as CFString)
+        let plistURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plistURL)
+    }
+
+    func removeTestSuiteAndPlist(named suiteName: String) {
+        Self.removeTestSuiteAndPlist(named: suiteName)
     }
 }

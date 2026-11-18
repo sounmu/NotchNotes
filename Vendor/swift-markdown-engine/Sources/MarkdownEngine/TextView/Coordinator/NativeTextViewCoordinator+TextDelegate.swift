@@ -433,6 +433,9 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if let onCommandSelector, onCommandSelector(commandSelector) {
+            return true
+        }
         if !isProgrammaticEdit && !isWritingToolsActive && !textView.hasMarkedText(),
            textView.undoManager?.isUndoing != true, textView.undoManager?.isRedoing != true,
            commandSelector == #selector(NSResponder.deleteBackward(_:))
@@ -474,6 +477,16 @@ extension NativeTextViewCoordinator {
         }
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
             return handleBacktab(textView)
+        }
+        if commandSelector == #selector(NSResponder.deleteBackward(_:))
+            || commandSelector == #selector(NSResponder.deleteWordBackward(_:)) {
+            return MarkdownLists.handleDeleteBackward(textView: textView)
+        }
+        if commandSelector == #selector(NSResponder.moveLeft(_:)) {
+            return MarkdownLists.handleHorizontalArrow(textView: textView, movingLeft: true)
+        }
+        if commandSelector == #selector(NSResponder.moveRight(_:)) {
+            return MarkdownLists.handleHorizontalArrow(textView: textView, movingLeft: false)
         }
         return false
     }
@@ -573,11 +586,12 @@ extension NativeTextViewCoordinator {
 
         // Outdent a whole Shift+Enter list item, including its continuation
         // lines, in one undoable edit.
-        if let block = MarkdownLists.listItemBlock(for: nsText, location: caretLoc) {
+        if let block = MarkdownLists.listItemBlock(for: nsText, location: caretLoc),
+           !(block.lineRanges.count == 1 && block.context.marker == "a." && !block.context.hasCheckbox) {
             return MarkdownLists.outdentListItemBlock(textView, block: block)
         }
 
-        let pattern = #"^([\t ]*)((\d+|a)\.|-|•)\s"#
+        let pattern = #"^([\t ]*)((\d+|a)\.|-|\*|•)\s"#
         let regex = try? NSRegularExpression(pattern: pattern)
         if let regex = regex,
            let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16.count)) {

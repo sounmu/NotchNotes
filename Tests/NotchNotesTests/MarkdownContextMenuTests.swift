@@ -45,7 +45,7 @@ final class MarkdownContextMenuTests: XCTestCase {
                         prefix = "## "
                     case 1:
                         coordinator.didMarkdownUnorderedList(nil)
-                        prefix = "\t• "
+                        prefix = "- "
                     default:
                         coordinator.didMarkdownOrderedList(nil)
                         prefix = "1. "
