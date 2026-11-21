@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SleepGuardCore
 import Testing
 @testable import NotchNotes
 
@@ -20,7 +21,7 @@ private final class StubPanelLaunchAtLoginController: LaunchAtLoginControlling {
 
 @MainActor
 private final class StubPanelSystemSleepGuard: SystemSleepGuardControlling {
-    var onUnexpectedStop: (() -> Void)?
+    var onUnexpectedStop: ((SleepGuardFailure?) -> Void)?
     var requiresApproval = false
     var isRunning = false
     private(set) var requestStopCallCount = 0
@@ -87,6 +88,23 @@ struct NotchPanelActivationTests {
         #expect(context.controller.isExpanded)
 
         context.controller.handleDrawerEscape()
+        #expect(!context.controller.isExpanded)
+    }
+
+    @Test
+    func statusItemTogglesActiveDrawerAndPromotesPassivePreview() throws {
+        let context = try makeIsolatedController()
+        defer { context.cleanup() }
+
+        context.controller.toggle(animated: false)
+        #expect(context.controller.isExpanded)
+        context.controller.toggle(animated: false)
+        #expect(!context.controller.isExpanded)
+
+        context.controller.expand(animated: false, activate: false)
+        context.controller.toggle(animated: false)
+        #expect(context.controller.isExpanded)
+        context.controller.toggle(animated: false)
         #expect(!context.controller.isExpanded)
     }
 

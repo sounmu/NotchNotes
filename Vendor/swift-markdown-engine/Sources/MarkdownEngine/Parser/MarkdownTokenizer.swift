@@ -32,8 +32,8 @@ private extension MarkdownTokenizer {
         pattern: #"^```[ \t]*([A-Za-z0-9_+#.-]*?)[ \t]*\r?\n((?:(?!^```[^\r\n]*$)[\s\S])*?)^(```)[^\r\n]*$"#,
         options: [.anchorsMatchLines]
     )
-    static let strikethroughRegex = try! NSRegularExpression(
-        pattern: #"(?<!~)~~(?=[^\s~])([^\r\n]*?[^\s~])~~(?!~)"#,
+    static let strikethroughMarkerRegex = try! NSRegularExpression(
+        pattern: #"(?<!~)~~(?!~)|\R"#,
         options: []
     )
     static let blockLatexRegex = try! NSRegularExpression(
@@ -56,22 +56,6 @@ enum MarkdownTokenizer {
 
         // Emphasis via stack parser.
         tokens.append(contentsOf: parseEmphasisTokens(in: text))
-
-        // Strikethrough ~~text~~ (single line)
-        let strikeSource = NSMutableString(string: text)
-        for escape in MarkdownEscaping.markerRanges(in: text, tokens: []) {
-            strikeSource.replaceCharacters(in: NSRange(location: escape.location + 1, length: 1), with: "\u{FFFC}")
-        }
-        for match in strikethroughRegex.matches(in: strikeSource as String, options: [], range: fullRange) {
-            let full = match.range(at: 0)
-            let content = match.range(at: 1)
-            let openMarker = NSRange(location: full.location, length: 2)
-            let closeMarker = NSRange(location: full.location + full.length - 2, length: 2)
-            tokens.append(MarkdownToken(kind: .strikethrough,
-                                        range: full,
-                                        contentRange: content,
-                                        markerRanges: [openMarker, closeMarker]))
-        }
 
         // Image embeds ![[Name]] (must be parsed before wikiLinks)
         var imageEmbedRanges: [NSRange] = []
@@ -235,7 +219,64 @@ enum MarkdownTokenizer {
                                         markerRanges: [openDollar, closeDollar]))
         }
 
+        let codeRanges = tokens.filter { $0.kind == .codeBlock || $0.kind == .inlineCode }
+            .map(\.range).sorted { $0.location < $1.location }
+        tokens.append(contentsOf: parseStrikethrough(in: text, excluding: codeRanges))
         return tokens
+    }
+
+    private static func parseStrikethrough(in text: String, excluding codeRanges: [NSRange]) -> [MarkdownToken] {
+        // Mask characters escaped by formatted editing (`\~`) so a typed literal
+        // tilde never pairs with a neighbouring marker. Lengths stay unchanged.
+        let masked = NSMutableString(string: text)
+        for escape in MarkdownEscaping.markerRanges(in: text, tokens: []) {
+            masked.replaceCharacters(in: NSRange(location: escape.location + 1, length: 1), with: "\u{FFFC}")
+        }
+        let source = masked as NSString
+        let fullRange = NSRange(location: 0, length: source.length)
+        var tokens: [MarkdownToken] = []
+        var opener: NSRange?
+        var codeIndex = 0
+
+        for match in strikethroughMarkerRegex.matches(in: masked as String, range: fullRange) {
+            let marker = match.range
+            guard source.character(at: marker.location) == 0x7E else {
+                opener = nil
+                continue
+            }
+
+            while codeIndex < codeRanges.count, NSMaxRange(codeRanges[codeIndex]) <= marker.location {
+                codeIndex += 1
+            }
+            if codeIndex < codeRanges.count, NSIntersectionRange(codeRanges[codeIndex], marker).length > 0 {
+                continue
+            }
+
+            var start = marker.location
+            while start > 0, source.character(at: start - 1) == 0x5C { start -= 1 }
+            guard (marker.location - start).isMultiple(of: 2) else { continue }
+
+            let canClose = marker.location > 0 && !isWhitespace(source.character(at: marker.location - 1))
+            if let open = opener, canClose {
+                let content = NSRange(location: NSMaxRange(open), length: marker.location - NSMaxRange(open))
+                tokens.append(MarkdownToken(kind: .strikethrough,
+                                            range: NSUnionRange(open, marker),
+                                            contentRange: content,
+                                            markerRanges: [open, marker]))
+                opener = nil
+                continue
+            }
+
+            let end = NSMaxRange(marker)
+            if end < source.length, !isWhitespace(source.character(at: end)) {
+                opener = marker
+            }
+        }
+        return tokens
+    }
+
+    private static func isWhitespace(_ codeUnit: unichar) -> Bool {
+        UnicodeScalar(codeUnit).map { CharacterSet.whitespacesAndNewlines.contains($0) } ?? false
     }
 
     // MARK: - Code Block Helpers

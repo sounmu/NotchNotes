@@ -114,7 +114,6 @@ extension MarkdownStyler {
     static func styleStrikethrough(_ ctx: StylingContext) -> [StyledRange] {
         var attrs: [StyledRange] = []
         for token in ctx.tokens where token.kind == .strikethrough {
-            if inlineTokenIsLiteral(token, in: ctx) { continue }
             let mutedText = ctx.configuration.theme.mutedText
             attrs.append((token.contentRange, [
                 .foregroundColor: mutedText,
